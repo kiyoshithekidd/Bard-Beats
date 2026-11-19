@@ -1,0 +1,15 @@
+# Build artifacts
+build/
+*.3dsx
+*.cia
+*.elf
+*.smdh
+*.map
+*.lst
+romfs/gfx/*.t3x
+romfs/audio/*.bin
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.swp
