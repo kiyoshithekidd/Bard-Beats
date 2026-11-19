@@ -8,7 +8,7 @@
 namespace BardBeats {
 
 static constexpr int NUM_WAVE_BUFS = 3;
-static constexpr int SAMPLES_PER_BUF = 160; // 4.888 ms at 32728.5 Hz
+static constexpr int SAMPLES_PER_BUF = 320; // 9.77 ms at 32728.5 Hz (zero underruns on Old 3DS)
 static constexpr int BYTES_PER_BUF = SAMPLES_PER_BUF * 2 * sizeof(int16_t);
 static constexpr int VOCAL_CHN = 1;
 
@@ -102,11 +102,15 @@ static void triggerStepNotes(const LoopFile& loop, int step, double samplesPerSt
         if (cell.flags & 1) continue;
         uint8_t vel = cell.velocity > 0 ? cell.velocity : 95;
         float bendSemis = static_cast<float>(cell.pitchBendSemisQ4) / 16.0f;
-        int gateSamples = static_cast<int>(samplesPerStep * (cell.gateLength > 0 ? cell.gateLength : 1) * 0.85);
+        uint8_t instId = loop.tracks[t].instrumentId;
+        double gateMult = 0.85;
+        if (instId == INST_LUTE || instId == INST_HARP) gateMult = 3.5;
+        else if (instId == INST_UPRIGHT_BASS) gateMult = 2.0;
+        int gateSamples = static_cast<int>(samplesPerStep * (cell.gateLength > 0 ? cell.gateLength : 1) * gateMult);
         for (int p = 0; p < BB_MAX_POLY_PER_STEP; ++p) {
             uint8_t note = cell.notes[p];
             if (note != 0) {
-                s_eng.synth.triggerNote(t, loop.tracks[t].instrumentId, note, vel, bendSemis, gateSamples, false);
+                s_eng.synth.triggerNote(t, instId, note, vel, bendSemis, gateSamples, false);
             }
         }
     }
@@ -306,9 +310,7 @@ bool audioEngineInit() {
     ndspSetCallback(ndspFrameCallback, nullptr);
     s_eng.running.store(true);
 
-    s32 prio = 0x30;
-    svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
-    s_eng.audioThread = threadCreate(audioThreadMain, nullptr, 16 * 1024, prio - 2, -2, false);
+    s_eng.audioThread = threadCreate(audioThreadMain, nullptr, 16 * 1024, 0x1A, -2, false);
     return true;
 }
 

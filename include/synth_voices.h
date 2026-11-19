@@ -29,20 +29,30 @@ struct Voice {
     float    envLevel;
     float    gain;
     float    phase;
-    float    phase2;             // Detuned 2nd oscillator / FM modulator
+    float    phase2;
     float    phaseInc;
     float    baseFreq;
-    float    notePitchBendSemis; // Per-note recorded bend
+    float    notePitchMult;      // Precomputed pow(2, notePitchBendSemis/12)
     float    samplePos;
     float    sampleInc;
     float    lpfState;
-    float    lpfState2;          // 2-pole filter state / bandpass
+    float    lpfState2;
+    // Fast multiplicative envelopes (zero std::exp per sample!)
+    float    drumAmpEnv;
+    float    drumAmpDecay;
+    float    drumPitchEnv;
+    float    drumPitchDecay;
+    float    drumNoiseEnv;
+    float    drumNoiseDecay;
+    float    filterEnv;
+    float    filterDecay;
+
     uint32_t ageSamples;
-    uint32_t rngState;           // Proper xorshift32 white noise PRNG
-    int      samplesRemaining;   // Gate countdown for sequencer notes (-1 for held live)
+    uint32_t rngState;
+    int      samplesRemaining;
 };
 
-// Lightweight Tavern Room Stereo Reverb (4 comb filters + 2 all-pass diffusers)
+// Lightweight Tavern Room Stereo Reverb (2 comb + 1 all-pass per channel, fast on ARM11)
 struct TavernReverb {
     static constexpr int COMB_L1 = 743;
     static constexpr int COMB_L2 = 907;
@@ -95,7 +105,7 @@ private:
 
     int allocateVoice(int trackIdx, uint8_t midiNote, uint8_t instrumentId);
     void loadWaveTable(const char* path, int16_t** outData, uint32_t* outLen);
-    float renderVoiceSample(Voice& v, float liveBendSemis, float liveVibOffset);
+    float renderVoiceSample(Voice& v, float livePitchMult);
 };
 
 } // namespace BardBeats
