@@ -15,7 +15,6 @@ import os
 import random
 import struct
 import wave
-from PIL import Image, ImageDraw
 
 SAMPLE_RATE_3DS = 32728.498
 BANNER_SR = 22050
@@ -107,7 +106,7 @@ def generate_banner_wav() -> None:
         wf.writeframes(bytes(frames))
 
 
-def draw_lute_emblem(draw: ImageDraw.ImageDraw, cx: int, cy: int, scale: float) -> None:
+def draw_lute_emblem(draw, cx: int, cy: int, scale: float) -> None:
     # Warm wooden lute body (teardrop / pear shape)
     bw = int(14 * scale)
     bh = int(16 * scale)
@@ -132,6 +131,7 @@ def draw_lute_emblem(draw: ImageDraw.ImageDraw, cx: int, cy: int, scale: float) 
 
 
 def generate_images() -> None:
+    from PIL import Image, ImageDraw
     os.makedirs("gfx", exist_ok=True)
 
     # 1. icon.png (48x48)
