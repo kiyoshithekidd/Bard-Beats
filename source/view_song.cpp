@@ -1,31 +1,253 @@
 #include "view_song.h"
+#include "audio_engine.h"
+#include "mic_recorder.h"
 #include "ui_common.h"
+#include <cstdio>
 
 namespace BardBeats {
 
+static constexpr uint32_t SECTION_COLORS[6] = {
+    C2D_Color32(0x3E, 0x8E, 0xB8, 0xFF), // Intro: Blue
+    C2D_Color32(0x52, 0xA8, 0x58, 0xFF), // Verse: Green
+    C2D_Color32(0xD9, 0x62, 0x48, 0xFF), // Chorus: Ember
+    C2D_Color32(0x9A, 0x5E, 0xC4, 0xFF), // Bridge: Purple
+    C2D_Color32(0xC8, 0x9B, 0x3C, 0xFF), // Outro: Gold
+    C2D_Color32(0x6E, 0x62, 0x58, 0xFF)  // Part: Slate
+};
+
 void viewSongDrawTop(const AppState& state) {
     uiDrawTopHeader(state);
-    C2D_DrawRectSolid(20.0f, 54.0f, 0.1f, 360.0f, 120.0f, Colors::BG_PANEL);
-    uiDrawTextCentered({20.0f, 70.0f, 360.0f, 30.0f}, 0.52f, Colors::GOLD_TEXT,
-                       "Song Mode & Vocals (Slice 2)");
-    uiDrawTextCentered({20.0f, 108.0f, 360.0f, 24.0f}, 0.40f, Colors::CREAM_TEXT,
-                       "Chain loops into songs and record vocals with the 3DS mic.");
-    uiDrawTextCentered({20.0f, 134.0f, 360.0f, 24.0f}, 0.38f, Colors::MUTED_TEXT,
-                       "Slice 1 focuses on the 16-step grid, live play, and Spellbook.");
+
+    // 1. Horizontal Song Arrangement Timeline (y: 44..130)
+    C2D_DrawRectSolid(8.0f, 44.0f, 0.05f, 384.0f, 84.0f, Colors::BG_PANEL);
+    uiDrawText(14.0f, 48.0f, 0.38f, 0.38f, Colors::MUTED_TEXT, "SONG ARRANGEMENT (LIVE CLIPS)");
+
+    int totalBars = state.getTotalSongBars();
+    if (totalBars < 1) totalBars = 1;
+    int playEntry = audioEngineGetSongEntryIndex();
+    int playRep   = audioEngineGetSongRepeatIndex();
+
+    float timelineX = 14.0f;
+    float timelineW = 372.0f;
+    float curX = timelineX;
+
+    for (int i = 0; i < state.currentSong.numEntries; ++i) {
+        const SongChainEntry& e = state.currentSong.chain[i];
+        int reps = (e.repeatCount > 0 ? e.repeatCount : 1);
+        float segW = timelineW * (static_cast<float>(reps) / static_cast<float>(totalBars));
+        if (segW < 10.0f) segW = 10.0f;
+
+        uint32_t col = SECTION_COLORS[static_cast<int>(e.sectionTag) % 6];
+        bool isPlayingSlot = state.isPlaying && (i == playEntry);
+        bool isSelected    = (i == state.selectedSongSlot);
+
+        Rect sr = { curX + 1.0f, 66.0f, segW - 2.0f, 54.0f };
+        C2D_DrawRectSolid(sr.x, sr.y, 0.1f, sr.w, sr.h, col);
+        if (isSelected || isPlayingSlot) {
+            uint32_t bCol = isPlayingSlot ? Colors::PLAYHEAD_LINE : Colors::CREAM_TEXT;
+            C2D_DrawRectSolid(sr.x, sr.y, 0.25f, sr.w, 2.0f, bCol);
+            C2D_DrawRectSolid(sr.x, sr.y + sr.h - 2.0f, 0.25f, sr.w, 2.0f, bCol);
+            C2D_DrawRectSolid(sr.x, sr.y, 0.25f, 2.0f, sr.h, bCol);
+            C2D_DrawRectSolid(sr.x + sr.w - 2.0f, sr.y, 0.25f, 2.0f, sr.h, bCol);
+        }
+
+        if (segW >= 34.0f) {
+            char lbl[20];
+            std::snprintf(lbl, sizeof(lbl), "%s x%d", getSectionTagName(e.sectionTag), reps);
+            uiDrawText(sr.x + 4.0f, sr.y + 6.0f, 0.34f, 0.34f, Colors::CREAM_TEXT, lbl);
+            uiDrawText(sr.x + 4.0f, sr.y + 24.0f, 0.30f, 0.30f, Colors::BG_DARK,
+                       state.getLoopNameById(e.loopId));
+        }
+
+        // Playhead sweep inside active clip
+        if (isPlayingSlot) {
+            float barFrac = (static_cast<float>(playRep) +
+                             static_cast<float>(audioEngineGetCurrentStep()) / 16.0f) /
+                            static_cast<float>(reps);
+            float px = sr.x + sr.w * barFrac;
+            C2D_DrawRectSolid(px, sr.y, 0.4f, 2.5f, sr.h, Colors::PLAYHEAD_LINE);
+        }
+        curX += segW;
+    }
+
+    // 2. Vocal Layer Waveform Ribbon (y: 136..204)
+    C2D_DrawRectSolid(8.0f, 136.0f, 0.05f, 384.0f, 66.0f, Colors::BG_PANEL);
+    const char* vocStatus = state.isRecordingVocal
+        ? "VOCAL LAYER: RECORDING LIVE..."
+        : (state.currentSong.hasSongVocal
+               ? (state.currentSong.songVocalMuted ? "VOCAL LAYER (MUTED)" : "VOCAL LAYER (ACTIVE OVER SONG)")
+               : "VOCAL LAYER: EMPTY (Tap REC VOC to sing over song)");
+    uiDrawText(14.0f, 140.0f, 0.36f, 0.36f,
+               state.isRecordingVocal ? Colors::RED_REC : Colors::GOLD_TEXT, vocStatus);
+
+    float waveX = 14.0f;
+    float waveW = 372.0f;
+    float barW  = waveW / BB_WAVE_BARS;
+    float midY  = 178.0f;
+
+    if (state.isRecordingVocal) {
+        float prog = micRecorderGetProgress();
+        C2D_DrawRectSolid(waveX, 166.0f, 0.1f, waveW, 20.0f, Colors::BG_DARK);
+        C2D_DrawRectSolid(waveX, 166.0f, 0.2f, waveW * prog, 20.0f, Colors::RED_REC);
+    } else if (state.currentSong.hasSongVocal) {
+        uint32_t wCol = state.currentSong.songVocalMuted ? Colors::MUTED_TEXT : Colors::PURPLE_SPELL;
+        for (int b = 0; b < BB_WAVE_BARS; ++b) {
+            float h = state.vocalWaveBars[b] * 38.0f;
+            if (h < 2.0f) h = 2.0f;
+            C2D_DrawRectSolid(waveX + b * barW + 1.0f, midY - h * 0.5f, 0.15f, barW - 2.0f, h, wCol);
+        }
+    } else {
+        C2D_DrawRectSolid(waveX, midY, 0.1f, waveW, 1.0f, Colors::BORDER_WOOD);
+    }
 }
 
 void viewSongDrawBottom(const AppState& state) {
-    (void)state;
-    Rect card = { 16.0f, 80.0f, 288.0f, 110.0f };
-    uiDrawButton(card, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT,
-                 "Tap SPELLBOOK for 1-Tap Loop Cues", 0.42f);
+    // Row 1: Master Tempo, Rename, Vocal Mute / Clear (y: 68..92)
+    Rect btnBpmDn   = {  4.0f, 68.0f, 40.0f, 24.0f };
+    Rect btnBpmUp   = { 46.0f, 68.0f, 40.0f, 24.0f };
+    Rect btnRename  = { 90.0f, 68.0f, 64.0f, 24.0f };
+    Rect btnVocMute = {158.0f, 68.0f, 78.0f, 24.0f };
+    Rect btnVocClr  = {240.0f, 68.0f, 76.0f, 24.0f };
+
+    uiDrawButton(btnBpmDn, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-BPM", 0.36f);
+    uiDrawButton(btnBpmUp, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+BPM", 0.36f);
+    uiDrawButton(btnRename, Colors::BG_CARD_ALT, Colors::BORDER_WOOD, Colors::GOLD_TEXT, "NAME", 0.36f);
+    uiDrawButton(btnVocMute,
+                 state.currentSong.songVocalMuted ? Colors::RED_REC : Colors::BG_CARD,
+                 Colors::BORDER_WOOD, Colors::CREAM_TEXT,
+                 state.currentSong.songVocalMuted ? "UNMUTE V" : "MUTE VOC", 0.34f);
+    uiDrawButton(btnVocClr, Colors::BG_CARD, Colors::RED_REC, Colors::RED_REC, "CLR VOC", 0.34f);
+
+    // Row 2: Selected Clip Card + Prev/Next Slot Selector (y: 96..158)
+    Rect btnPrevSlot = {  4.0f, 98.0f, 36.0f, 58.0f };
+    Rect cardRect    = { 44.0f, 98.0f, 232.0f, 58.0f };
+    Rect btnNextSlot = {280.0f, 98.0f, 36.0f, 58.0f };
+
+    uiDrawButton(btnPrevSlot, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, "<", 0.55f);
+    uiDrawButton(btnNextSlot, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, ">", 0.55f);
+
+    if (state.currentSong.numEntries > 0 && state.selectedSongSlot < state.currentSong.numEntries) {
+        const SongChainEntry& e = state.currentSong.chain[state.selectedSongSlot];
+        uint32_t secCol = SECTION_COLORS[static_cast<int>(e.sectionTag) % 6];
+        uiDrawButton(cardRect, Colors::BG_CARD_ALT, secCol, Colors::CREAM_TEXT, nullptr);
+
+        char header[48];
+        std::snprintf(header, sizeof(header), "Slot %d/%d: [%s] x%d",
+                      state.selectedSongSlot + 1, state.currentSong.numEntries,
+                      getSectionTagName(e.sectionTag), e.repeatCount);
+        uiDrawText(cardRect.x + 8.0f, cardRect.y + 6.0f, 0.42f, 0.42f, Colors::GOLD_TEXT, header);
+
+        char loopLbl[48];
+        std::snprintf(loopLbl, sizeof(loopLbl), "Loop: %s", state.getLoopNameById(e.loopId));
+        uiDrawText(cardRect.x + 8.0f, cardRect.y + 26.0f, 0.40f, 0.40f, Colors::CREAM_TEXT, loopLbl);
+
+        // Quick repeat & section tag pills inside card right side
+        Rect btnRepDn = { cardRect.x + 150.0f, cardRect.y + 30.0f, 34.0f, 22.0f };
+        Rect btnRepUp = { cardRect.x + 188.0f, cardRect.y + 30.0f, 34.0f, 22.0f };
+        uiDrawButton(btnRepDn, Colors::BG_DARK, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-x", 0.36f);
+        uiDrawButton(btnRepUp, Colors::BG_DARK, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+x", 0.36f);
+    } else {
+        uiDrawButton(cardRect, Colors::BG_PANEL, Colors::BORDER_WOOD, Colors::MUTED_TEXT,
+                     "No clips yet - Tap +ADD", 0.40f);
+    }
+
+    // Row 3: Clip Actions (y: 164..200)
+    Rect btnAdd   = {  4.0f, 164.0f, 54.0f, 36.0f };
+    Rect btnCopy  = { 61.0f, 164.0f, 76.0f, 36.0f };
+    Rect btnEdit  = {140.0f, 164.0f, 70.0f, 36.0f };
+    Rect btnSec   = {213.0f, 164.0f, 56.0f, 36.0f };
+    Rect btnDel   = {272.0f, 164.0f, 44.0f, 36.0f };
+
+    uiDrawButton(btnAdd,  Colors::GREEN_PLAY,   Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+ADD", 0.38f);
+    uiDrawButton(btnCopy, Colors::AMBER_JAM,    Colors::BORDER_WOOD, Colors::BG_DARK,    "COPY+TWK", 0.35f);
+    uiDrawButton(btnEdit, Colors::BLUE_ACTION,  Colors::GOLD_TEXT,   Colors::CREAM_TEXT, "EDIT LP", 0.37f);
+    uiDrawButton(btnSec,  Colors::BG_CARD_ALT,  Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "SECT", 0.36f);
+    uiDrawButton(btnDel,  Colors::BG_CARD,      Colors::RED_REC,     Colors::RED_REC,    "DEL", 0.36f);
 }
 
 void viewSongHandleTouch(AppState& state, float tx, float ty, bool isJustPressed) {
     if (!isJustPressed) return;
-    Rect card = { 16.0f, 80.0f, 288.0f, 110.0f };
-    if (card.contains(tx, ty)) {
-        state.activeView = VIEW_SPELLBOOK;
+
+    // Row 1
+    Rect btnBpmDn   = {  4.0f, 68.0f, 40.0f, 24.0f };
+    Rect btnBpmUp   = { 46.0f, 68.0f, 40.0f, 24.0f };
+    Rect btnRename  = { 90.0f, 68.0f, 64.0f, 24.0f };
+    Rect btnVocMute = {158.0f, 68.0f, 78.0f, 24.0f };
+    Rect btnVocClr  = {240.0f, 68.0f, 76.0f, 24.0f };
+
+    if (btnBpmDn.contains(tx, ty)) {
+        if (state.currentSong.bpm > 60) state.currentSong.bpm -= 4;
+        state.syncSongToAudio();
+        return;
+    }
+    if (btnBpmUp.contains(tx, ty)) {
+        if (state.currentSong.bpm < 180) state.currentSong.bpm += 4;
+        state.syncSongToAudio();
+        return;
+    }
+    if (btnRename.contains(tx, ty)) {
+        state.renameCurrentSong();
+        return;
+    }
+    if (btnVocMute.contains(tx, ty)) {
+        state.toggleVocalMute(true);
+        return;
+    }
+    if (btnVocClr.contains(tx, ty)) {
+        state.clearVocalTake(true);
+        return;
+    }
+
+    // Row 2: Slot Selector & Repeat Steppers
+    Rect btnPrevSlot = {  4.0f, 98.0f, 36.0f, 58.0f };
+    Rect cardRect    = { 44.0f, 98.0f, 232.0f, 58.0f };
+    Rect btnNextSlot = {280.0f, 98.0f, 36.0f, 58.0f };
+    Rect btnRepDn    = { cardRect.x + 150.0f, cardRect.y + 30.0f, 34.0f, 22.0f };
+    Rect btnRepUp    = { cardRect.x + 188.0f, cardRect.y + 30.0f, 34.0f, 22.0f };
+
+    if (btnPrevSlot.contains(tx, ty) && state.selectedSongSlot > 0) {
+        state.selectedSongSlot--;
+        return;
+    }
+    if (btnNextSlot.contains(tx, ty) && state.selectedSongSlot + 1 < state.currentSong.numEntries) {
+        state.selectedSongSlot++;
+        return;
+    }
+    if (state.currentSong.numEntries > 0 && state.selectedSongSlot < state.currentSong.numEntries) {
+        SongChainEntry& e = state.currentSong.chain[state.selectedSongSlot];
+        if (btnRepDn.contains(tx, ty)) {
+            if (e.repeatCount > 1) e.repeatCount--;
+            state.syncSongToAudio();
+            return;
+        }
+        if (btnRepUp.contains(tx, ty)) {
+            if (e.repeatCount < 16) e.repeatCount++;
+            state.syncSongToAudio();
+            return;
+        }
+    }
+
+    // Row 3: Clip Actions
+    Rect btnAdd   = {  4.0f, 164.0f, 54.0f, 36.0f };
+    Rect btnCopy  = { 61.0f, 164.0f, 76.0f, 36.0f };
+    Rect btnEdit  = {140.0f, 164.0f, 70.0f, 36.0f };
+    Rect btnSec   = {213.0f, 164.0f, 56.0f, 36.0f };
+    Rect btnDel   = {272.0f, 164.0f, 44.0f, 36.0f };
+
+    if (btnAdd.contains(tx, ty)) {
+        state.addCurrentLoopToSong();
+    } else if (btnCopy.contains(tx, ty)) {
+        state.copyAndTweakSongSlot(state.selectedSongSlot);
+    } else if (btnEdit.contains(tx, ty)) {
+        state.editSongSlotLoop(state.selectedSongSlot);
+    } else if (btnSec.contains(tx, ty)) {
+        if (state.currentSong.numEntries > 0 && state.selectedSongSlot < state.currentSong.numEntries) {
+            SongChainEntry& e = state.currentSong.chain[state.selectedSongSlot];
+            e.sectionTag = static_cast<SectionTag>((static_cast<int>(e.sectionTag) + 1) % 6);
+            state.syncSongToAudio();
+        }
+    } else if (btnDel.contains(tx, ty)) {
+        state.deleteSongSlot(state.selectedSongSlot);
     }
 }
 

@@ -2,6 +2,7 @@
 #include <citro2d.h>
 #include "app_state.h"
 #include "audio_engine.h"
+#include "mic_recorder.h"
 #include "storage_sd.h"
 #include "ui_common.h"
 #include "view_grid.h"
@@ -26,6 +27,7 @@ int main(int argc, char* argv[]) {
     BardBeats::uiInit();
     BardBeats::storageInit();
     BardBeats::audioEngineInit();
+    BardBeats::micRecorderInit();
 
     BardBeats::AppState state;
     state.init();
@@ -131,6 +133,7 @@ int main(int argc, char* argv[]) {
         C3D_FrameEnd(0);
     }
 
+    BardBeats::micRecorderExit();
     BardBeats::audioEngineExit();
     BardBeats::uiExit();
     C2D_Fini();

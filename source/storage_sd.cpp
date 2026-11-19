@@ -54,6 +54,13 @@ bool storageInit() {
             storageSaveLoop(starter);
         }
     }
+
+    auto existingSongs = storageListSongs();
+    if (existingSongs.empty()) {
+        SongFile starterSong;
+        initStarterSong(starterSong);
+        storageSaveSong(starterSong);
+    }
     return true;
 }
 
@@ -260,6 +267,209 @@ bool storageExportLoopMidi(const LoopFile& loop, char* outPathBuf, int outPathBu
         std::snprintf(outPathBuf, outPathBufSize, "%s", path);
     }
     return wr == out.size();
+}
+
+// ---- Song (.bbsong) Persistence ----
+
+std::vector<SongSummary> storageListSongs() {
+    std::vector<SongSummary> list;
+    DIR* dir = opendir(SONGS_DIR);
+    if (!dir) return list;
+
+    struct dirent* ent;
+    while ((ent = readdir(dir)) != nullptr) {
+        size_t len = std::strlen(ent->d_name);
+        if (len < 8 || std::strcmp(ent->d_name + len - 7, ".bbsong") != 0) continue;
+
+        char fullPath[512];
+        std::snprintf(fullPath, sizeof(fullPath), "%s/%s", SONGS_DIR, ent->d_name);
+        FILE* f = std::fopen(fullPath, "rb");
+        if (!f) continue;
+
+        SongFile hdr;
+        size_t rd = std::fread(&hdr, 1, sizeof(SongFile), f);
+        std::fclose(f);
+        if (rd == sizeof(SongFile) && std::memcmp(hdr.magic, "BBSG", 4) == 0) {
+            SongSummary s{};
+            s.songId = hdr.songId;
+            s.bpm = hdr.bpm;
+            s.numEntries = hdr.numEntries;
+            s.hasVocal = hdr.hasSongVocal;
+            std::snprintf(s.name, sizeof(s.name), "%s", hdr.name);
+            std::snprintf(s.filename, sizeof(s.filename), "%s", ent->d_name);
+            list.push_back(s);
+        }
+    }
+    closedir(dir);
+
+    std::sort(list.begin(), list.end(), [](const SongSummary& a, const SongSummary& b) {
+        return a.songId < b.songId;
+    });
+    return list;
+}
+
+uint16_t storageGetNextSongId() {
+    auto list = storageListSongs();
+    uint16_t maxId = 0;
+    for (const auto& s : list) {
+        if (s.songId > maxId) maxId = s.songId;
+    }
+    return maxId + 1;
+}
+
+static void removeExistingSongFilesForId(uint16_t songId) {
+    auto list = storageListSongs();
+    for (const auto& s : list) {
+        if (s.songId == songId) {
+            char path[512];
+            std::snprintf(path, sizeof(path), "%s/%s", SONGS_DIR, s.filename);
+            std::remove(path);
+        }
+    }
+}
+
+bool storageSaveSong(const SongFile& song) {
+    removeExistingSongFilesForId(song.songId);
+
+    char cleanName[32];
+    sanitizeName(song.name, cleanName, sizeof(cleanName));
+
+    char tmpPath[256];
+    char finalPath[256];
+    std::snprintf(tmpPath, sizeof(tmpPath), "%s/%03u_%s.tmp", SONGS_DIR, song.songId, cleanName);
+    std::snprintf(finalPath, sizeof(finalPath), "%s/%03u_%s.bbsong", SONGS_DIR, song.songId, cleanName);
+
+    FILE* f = std::fopen(tmpPath, "wb");
+    if (!f) return false;
+    size_t wr = std::fwrite(&song, 1, sizeof(SongFile), f);
+    std::fflush(f);
+    std::fclose(f);
+
+    if (wr != sizeof(SongFile)) {
+        std::remove(tmpPath);
+        return false;
+    }
+    std::remove(finalPath);
+    return std::rename(tmpPath, finalPath) == 0;
+}
+
+bool storageLoadSong(uint16_t songId, SongFile& outSong) {
+    auto list = storageListSongs();
+    for (const auto& s : list) {
+        if (s.songId == songId) {
+            char path[512];
+            std::snprintf(path, sizeof(path), "%s/%s", SONGS_DIR, s.filename);
+            FILE* f = std::fopen(path, "rb");
+            if (!f) return false;
+            size_t rd = std::fread(&outSong, 1, sizeof(SongFile), f);
+            std::fclose(f);
+            return rd == sizeof(SongFile) && std::memcmp(outSong.magic, "BBSG", 4) == 0;
+        }
+    }
+    return false;
+}
+
+bool storageDeleteSong(uint16_t songId) {
+    removeExistingSongFilesForId(songId);
+    return true;
+}
+
+// ---- Vocal WAV Persistence (16-bit mono RIFF WAV) ----
+
+void storageGetLoopVocalPath(uint16_t loopId, char* outPath, int outSize) {
+    std::snprintf(outPath, outSize, "%s/loop_%03u_vocal.wav", VOCALS_DIR, loopId);
+}
+
+void storageGetSongVocalPath(uint16_t songId, char* outPath, int outSize) {
+    std::snprintf(outPath, outSize, "%s/song_%03u_vocal.wav", VOCALS_DIR, songId);
+}
+
+#pragma pack(push, 1)
+struct WavHeader {
+    char     riff[4];
+    uint32_t chunkSize;
+    char     wave[4];
+    char     fmt[4];
+    uint32_t fmtSize;
+    uint16_t audioFormat;
+    uint16_t numChannels;
+    uint32_t sampleRate;
+    uint32_t byteRate;
+    uint16_t blockAlign;
+    uint16_t bitsPerSample;
+    char     data[4];
+    uint32_t dataSize;
+};
+#pragma pack(pop)
+
+bool storageSaveVocalWav(const char* path, const int16_t* samples, uint32_t sampleCount, uint32_t sampleRate) {
+    if (!path || !samples || sampleCount == 0) return false;
+    char tmpPath[520];
+    std::snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", path);
+
+    WavHeader hdr{};
+    std::memcpy(hdr.riff, "RIFF", 4);
+    std::memcpy(hdr.wave, "WAVE", 4);
+    std::memcpy(hdr.fmt,  "fmt ", 4);
+    hdr.fmtSize       = 16;
+    hdr.audioFormat   = 1; // PCM
+    hdr.numChannels   = 1; // Mono
+    hdr.sampleRate    = sampleRate;
+    hdr.bitsPerSample = 16;
+    hdr.blockAlign    = 2;
+    hdr.byteRate      = sampleRate * 2;
+    std::memcpy(hdr.data, "data", 4);
+    hdr.dataSize      = sampleCount * sizeof(int16_t);
+    hdr.chunkSize     = 36 + hdr.dataSize;
+
+    FILE* f = std::fopen(tmpPath, "wb");
+    if (!f) return false;
+    size_t w1 = std::fwrite(&hdr, 1, sizeof(WavHeader), f);
+    size_t w2 = std::fwrite(samples, sizeof(int16_t), sampleCount, f);
+    std::fflush(f);
+    std::fclose(f);
+
+    if (w1 != sizeof(WavHeader) || w2 != sampleCount) {
+        std::remove(tmpPath);
+        return false;
+    }
+    std::remove(path);
+    return std::rename(tmpPath, path) == 0;
+}
+
+bool storageLoadVocalWav(const char* path, std::vector<int16_t>& outSamples) {
+    outSamples.clear();
+    if (!path) return false;
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return false;
+
+    WavHeader hdr{};
+    if (std::fread(&hdr, 1, sizeof(WavHeader), f) != sizeof(WavHeader) ||
+        std::memcmp(hdr.riff, "RIFF", 4) != 0 ||
+        std::memcmp(hdr.wave, "WAVE", 4) != 0 ||
+        hdr.audioFormat != 1 || hdr.numChannels != 1 || hdr.bitsPerSample != 16) {
+        std::fclose(f);
+        return false;
+    }
+
+    uint32_t numSamples = hdr.dataSize / sizeof(int16_t);
+    if (numSamples == 0 || numSamples > 16365 * 180) { // cap at 3 min
+        std::fclose(f);
+        return false;
+    }
+    outSamples.resize(numSamples);
+    size_t rd = std::fread(outSamples.data(), sizeof(int16_t), numSamples, f);
+    std::fclose(f);
+    if (rd != numSamples) {
+        outSamples.clear();
+        return false;
+    }
+    return true;
+}
+
+bool storageDeleteFile(const char* path) {
+    if (!path) return false;
+    return std::remove(path) == 0;
 }
 
 } // namespace BardBeats

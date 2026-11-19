@@ -128,6 +128,10 @@ uint8_t cycleTrackInstrument(int trackIdx, uint8_t currentInstId);
 void initEmptyLoop(LoopFile& loop, uint16_t id, const char* name, uint16_t bpm = 110);
 void initStarterLoop(LoopFile& loop, int presetIndex);
 
+const char* getSectionTagName(SectionTag tag);
+void initEmptySong(SongFile& song, uint16_t id, const char* name, uint16_t bpm = 112);
+void initStarterSong(SongFile& song);
+
 // Step editing helpers
 void toggleStepNote(StepCell& cell, uint8_t midiNote, uint8_t velocity = 95, int8_t bendQ4 = 0);
 void addStepNote(StepCell& cell, uint8_t midiNote, uint8_t velocity = 95, int8_t bendQ4 = 0);

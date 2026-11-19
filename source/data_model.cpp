@@ -309,4 +309,37 @@ void initStarterLoop(LoopFile& loop, int presetIndex) {
     }
 }
 
+const char* getSectionTagName(SectionTag tag) {
+    switch (tag) {
+        case SEC_INTRO:  return "Intro";
+        case SEC_VERSE:  return "Verse";
+        case SEC_CHORUS: return "Chorus";
+        case SEC_BRIDGE: return "Bridge";
+        case SEC_OUTRO:  return "Outro";
+        case SEC_CUSTOM: return "Part";
+        default:         return "Part";
+    }
+}
+
+void initEmptySong(SongFile& song, uint16_t id, const char* name, uint16_t bpm) {
+    std::memset(&song, 0, sizeof(SongFile));
+    std::memcpy(song.magic, "BBSG", 4);
+    song.version = 1;
+    song.songId = id;
+    std::snprintf(song.name, sizeof(song.name), "%s", name ? name : "New Song");
+    song.bpm = bpm;
+    song.numEntries = 0;
+    song.hasSongVocal = 0;
+    song.songVocalVolume = 95;
+    song.songVocalMuted = 0;
+}
+
+void initStarterSong(SongFile& song) {
+    initEmptySong(song, 1, "Ballad of the Inn", 112);
+    song.numEntries = 3;
+    song.chain[0] = { 1, 2, SEC_INTRO,  0, {0, 0, 0} };
+    song.chain[1] = { 3, 2, SEC_VERSE,  0, {0, 0, 0} };
+    song.chain[2] = { 2, 2, SEC_CHORUS, 0, {0, 0, 0} };
+}
+
 } // namespace BardBeats
