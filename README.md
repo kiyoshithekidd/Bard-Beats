@@ -1,23 +1,42 @@
-# BardBeats
+# Bard Beats
 
 A standalone loop maker for the Nintendo 3DS. A step sequencer and MIDI synth that lives entirely on the handheld: make loops, play live, chain clips into songs, and sing over them. No PC, no account, no ecosystem.
 
 ## What it does
 
-- **Step sequencer**: 16-step loops, one bar of 4/4 at 16th notes, with grid taps and live play.
-- **Live play**: play on the 3DS itself, on a rendered instrument, a MIDI sound pad view, or the grid. Buttons for notes, circle pad for pitch bend, ocarina-style.
-- **Jam and record**: the loop plays while you jam along, and hitting record lands the pattern on the grid. Restart or undo if you hate it.
-- **Song mode**: chain clips into songs with sections, repeat counts, one tempo, and a saved arrangement that stays live and editable.
-- **Vocals**: record voice with the built-in mic or a headset mic, per clip or over the whole song, as a layer over the arrangement.
-- **Saved loops**: loops save with names and play back on cue with one tap, a shelf of named loops like a spellbook.
+- **Step sequencer**: 16-step loops, one bar of 4/4 at 16th notes, with 4 tracks (Drums, Bass, Melody, Harmony) and 8 launch instruments (*Tavern Kit*, *8-Bit Kit*, *Upright Bass*, *Dungeon Sub*, *Ocarina*, *Chip Lead*, *Bard's Lute*, *Minstrel Harp*).
+- **Live play**: Play on the 3DS itself across Grid, 4x2 Sound Pads, and Rendered Instrument views. Buttons (`A/B/X/Y/D-Pad`) play notes, `L/R` shifts octave, and the Circle Pad bends pitch ($\pm 2$ semitones on X) and adds vibrato (on Y), ocarina-style.
+- **Jam and record**: The loop plays while you jam along (`JAM`), and tapping `REC` quantizes your live notes onto the 16-step grid. `UNDO` reverts your last pass without stopping playback.
+- **Saved loops (Spellbook)**: Loops save with names to `sdmc:/3ds/BardBeats/loops/*.bbloop` and play back on cue with one tap, plus optional Standard MIDI (`.mid`) export.
+- **Song mode & Vocals** *(Slice 2, coming next)*: Chain clips into songs with sections, repeat counts, one tempo, and record voice with the built-in or headset mic per clip or over the whole song.
 
 ## Status
 
-Early design. See [PRD.md](PRD.md) for the full product spec and [PERSONAS.md](PERSONAS.md) for who it is built for.
+- **Slice 1 (Complete & Building on `main`)**: 16-step sequencer grid, 4x2 Pads, Rendered Instrument view, 8-instrument `ndsp` audio engine, live play with Circle Pad pitch bend, `UNDO`, and Spellbook SD save/load/MIDI export.
+- **Slice 2 (Next)**: Song Mode clip chaining, drill-down loop editing, and `mic:u` vocal layer recording.
 
-## Platform
+See [PRD.md](PRD.md), [PERSONAS.md](PERSONAS.md), and [ARCHITECTURE.md](ARCHITECTURE.md) for the full spec and technical plan.
 
-Nintendo 3DS homebrew. Ships as .3dsx first, with a .cia build later so it launches from the home menu.
+## Platform & Building
+
+Nintendo 3DS homebrew (`.3dsx` for Homebrew Launcher and `.cia` for HOME Menu).
+
+- **CI Builds**: Every push to `main` builds `BardBeats.3dsx` and `BardBeats.cia` via GitHub Actions.
+- **Local Build** (requires devkitPro / devkitARM + `libctru` + `citro2d`):
+  ```sh
+  python3 tools/gen_assets.py --audio-only
+  make        # builds BardBeats.3dsx
+  make cia    # builds BardBeats.cia (requires bannertool and makerom)
+  ```
+
+## Controls
+
+- `START`: Play / Stop
+- `SELECT`: Toggle Spellbook Quick Play
+- `A / B / X / Y / D-Pad`: Play 8 scale notes live
+- `Circle Pad`: Pitch bend (Left/Right) and Vibrato (Up)
+- `L / R`: Octave Down / Up
+- `L + R + START`: Exit to Homebrew Launcher
 
 ## Content and IP
 
