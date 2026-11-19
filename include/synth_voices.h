@@ -29,15 +29,38 @@ struct Voice {
     float    envLevel;
     float    gain;
     float    phase;
+    float    phase2;             // Detuned 2nd oscillator / FM modulator
     float    phaseInc;
     float    baseFreq;
     float    notePitchBendSemis; // Per-note recorded bend
     float    samplePos;
     float    sampleInc;
     float    lpfState;
+    float    lpfState2;          // 2-pole filter state / bandpass
     uint32_t ageSamples;
-    uint32_t lfsrState;
+    uint32_t rngState;           // Proper xorshift32 white noise PRNG
     int      samplesRemaining;   // Gate countdown for sequencer notes (-1 for held live)
+};
+
+// Lightweight Tavern Room Stereo Reverb (4 comb filters + 2 all-pass diffusers)
+struct TavernReverb {
+    static constexpr int COMB_L1 = 743;
+    static constexpr int COMB_L2 = 907;
+    static constexpr int COMB_R1 = 787;
+    static constexpr int COMB_R2 = 953;
+    static constexpr int AP_LEN  = 223;
+
+    float cL1[COMB_L1];
+    float cL2[COMB_L2];
+    float cR1[COMB_R1];
+    float cR2[COMB_R2];
+    float apL[AP_LEN];
+    float apR[AP_LEN];
+    float lpL1, lpL2, lpR1, lpR2;
+    int   iL1, iL2, iR1, iR2, iAp;
+
+    void reset();
+    void process(float inMono, float& outL, float& outR);
 };
 
 class SynthVoices {
@@ -51,9 +74,6 @@ public:
     void releaseAllForTrack(int trackIdx);
     void stopAll();
 
-    // Render numSamples stereo PCM16 frames (interleaved L, R)
-    // liveBendSemis: Circle Pad X (-2.0 .. +2.0) applied to live notes
-    // liveVibrato:   Circle Pad Y (0.0 .. 1.0) applied to live notes
     void render(int16_t* outStereo, int numSamples, float liveBendSemis, float liveVibrato,
                 const uint8_t trackVolumes[BB_NUM_TRACKS], const uint8_t trackMuted[BB_NUM_TRACKS]);
 
@@ -68,6 +88,7 @@ private:
     int16_t* bassTbl_ = nullptr;
     uint32_t bassLen_ = 0;
 
+    TavernReverb reverb_;
     float vibPhase_ = 0.0f;
     float smoothedLiveBend_ = 0.0f;
     float lastPeak_ = 0.0f;

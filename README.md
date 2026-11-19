@@ -15,7 +15,7 @@ A standalone loop maker for the Nintendo 3DS. A step sequencer and MIDI synth th
 
 - **Slice 1 (Complete)**: 16-step sequencer grid, 4x2 Pads, Rendered Instrument view, 8-instrument `ndsp` audio engine, live play with Circle Pad pitch bend, `UNDO`, and Spellbook SD save/load/MIDI export.
 - **Slice 2 (Complete)**: Live Song Mode clip chaining, `COPY+TWK`, drill-down loop editing (`< SONG`), and `mic:u` vocal layer recording/playback on `ndsp` Channel 1.
-- **Visual Polish (Complete & Building on `main`)**: Custom illustrated 3DS HOME Menu icon (`icon.png`), tavern banner (`gfx/banner.png`), and `tex3ds` sprite sheet (`gfx/sprites.t3s`) for the Rendered Instrument stage (Lute, Ocarina, Harp, and Tavern Drum Kit) with live interactive glow overlays.
+- **Visual & Audio Polish (Complete & Building on `main`)**: Custom illustrated 3DS HOME Menu icon (`icon.png`), tavern banner (`gfx/banner.png`), `tex3ds` instrument sprite atlas (`gfx/sprites.t3s`), plus Audio Engine v2 (physically-modeled body-resonated Lute/Harp/Upright Bass wavetables, PolyBLEP anti-aliased chiptune synths, expressive breathy Ocarina, fixed xorshift32 percussion noise, stereo panning, and Tavern Room Stereo Reverb).
 
 See [PRD.md](PRD.md), [PERSONAS.md](PERSONAS.md), and [ARCHITECTURE.md](ARCHITECTURE.md) for the full spec and technical plan.
 

@@ -1,4 +1,5 @@
 #include "synth_voices.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -16,11 +17,74 @@ static inline float fastSemisToMult(float semis) {
     return std::pow(2.0f, semis / 12.0f);
 }
 
-static inline float nextNoise(uint32_t& lfsr) {
-    uint32_t bit = ((lfsr >> 0) ^ (lfsr >> 2) ^ (lfsr >> 3) ^ (lfsr >> 5)) & 1u;
-    lfsr = (lfsr >> 1) | (bit << 15);
-    return (static_cast<float>(lfsr & 0xFFFF) / 32768.0f) - 1.0f;
+// Crisp, uncorrelated white noise using xorshift32
+static inline float nextWhiteNoise(uint32_t& state) {
+    uint32_t x = state ? state : 0x6D2B79F5u;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    state = x;
+    return (static_cast<float>(static_cast<int32_t>(x)) * (1.0f / 2147483648.0f));
 }
+
+// PolyBLEP anti-aliasing residual for clean, alias-free square/saw oscillators
+static inline float polyBlep(float t, float dt) {
+    if (t < dt) {
+        t /= dt;
+        return t + t - t * t - 1.0f;
+    } else if (t > 1.0f - dt) {
+        t = (t - 1.0f) / dt;
+        return t * t + t + t + 1.0f;
+    }
+    return 0.0f;
+}
+
+// ---- Tavern Room Stereo Reverb ----
+
+void TavernReverb::reset() {
+    std::memset(this, 0, sizeof(TavernReverb));
+}
+
+void TavernReverb::process(float inMono, float& outL, float& outR) {
+    constexpr float fb = 0.68f;
+    constexpr float damp = 0.35f;
+
+    float dL1 = cL1[iL1];
+    lpL1 = dL1 * (1.0f - damp) + lpL1 * damp;
+    cL1[iL1] = inMono + lpL1 * fb;
+    if (++iL1 >= COMB_L1) iL1 = 0;
+
+    float dL2 = cL2[iL2];
+    lpL2 = dL2 * (1.0f - damp) + lpL2 * damp;
+    cL2[iL2] = inMono + lpL2 * (fb * 0.96f);
+    if (++iL2 >= COMB_L2) iL2 = 0;
+
+    float dR1 = cR1[iR1];
+    lpR1 = dR1 * (1.0f - damp) + lpR1 * damp;
+    cR1[iR1] = inMono + lpR1 * fb;
+    if (++iR1 >= COMB_R1) iR1 = 0;
+
+    float dR2 = cR2[iR2];
+    lpR2 = dR2 * (1.0f - damp) + lpR2 * damp;
+    cR2[iR2] = inMono + lpR2 * (fb * 0.96f);
+    if (++iR2 >= COMB_R2) iR2 = 0;
+
+    float sumL = (dL1 + dL2) * 0.5f;
+    float sumR = (dR1 + dR2) * 0.5f;
+
+    // 1-stage all-pass diffusion per channel
+    float bufL = apL[iAp];
+    outL = -sumL * 0.5f + bufL;
+    apL[iAp] = sumL + bufL * 0.5f;
+
+    float bufR = apR[iAp];
+    outR = -sumR * 0.5f + bufR;
+    apR[iAp] = sumR + bufR * 0.5f;
+
+    if (++iAp >= AP_LEN) iAp = 0;
+}
+
+// ---- SynthVoices ----
 
 void SynthVoices::loadWaveTable(const char* path, int16_t** outData, uint32_t* outLen) {
     *outData = nullptr;
@@ -45,6 +109,7 @@ void SynthVoices::loadWaveTable(const char* path, int16_t** outData, uint32_t* o
 
 void SynthVoices::init() {
     std::memset(voices_, 0, sizeof(voices_));
+    reverb_.reset();
     loadWaveTable("romfs:/audio/lute_tbl.bin", &luteTbl_, &luteLen_);
     loadWaveTable("romfs:/audio/harp_tbl.bin", &harpTbl_, &harpLen_);
     loadWaveTable("romfs:/audio/bass_tbl.bin", &bassTbl_, &bassLen_);
@@ -61,7 +126,6 @@ void SynthVoices::shutdown() {
 
 int SynthVoices::allocateVoice(int trackIdx, uint8_t midiNote, uint8_t instrumentId) {
     (void)instrumentId;
-    // 1. Retrigger same drum piece in place to avoid stacking identical drums
     if (trackIdx == TRACK_DRUMS) {
         for (int i = 0; i < BB_MAX_VOICES; ++i) {
             if (voices_[i].active && voices_[i].trackIdx == TRACK_DRUMS) {
@@ -73,12 +137,10 @@ int SynthVoices::allocateVoice(int trackIdx, uint8_t midiNote, uint8_t instrumen
         }
     }
 
-    // 2. Find a free voice
     for (int i = 0; i < BB_MAX_VOICES; ++i) {
         if (!voices_[i].active) return i;
     }
 
-    // 3. Steal oldest voice on the same track first, or oldest overall
     int bestSame = -1;
     uint32_t maxAgeSame = 0;
     int bestAny = 0;
@@ -111,14 +173,13 @@ void SynthVoices::triggerNote(int trackIdx, uint8_t instrumentId, uint8_t midiNo
     v.isLiveNote = isLive;
     v.envStage = ENV_ATTACK;
     v.envLevel = 0.0f;
-    v.gain = (static_cast<float>(velocity) / 127.0f) * 0.42f;
+    v.gain = (static_cast<float>(velocity) / 127.0f) * 0.44f;
     v.baseFreq = midiToFreq(midiNote);
     v.phaseInc = v.baseFreq / BB_SAMPLE_RATE;
     v.notePitchBendSemis = stepBendSemis;
-    v.lfsrState = 0xACE1u + static_cast<uint32_t>(idx * 131 + midiNote);
+    v.rngState = 0x9E3779B9u ^ (static_cast<uint32_t>(idx + 1) * 2654435761u) ^ (midiNote * 7919u);
     v.samplesRemaining = gateSamples;
 
-    // Set sample playback increment relative to wavetable base pitch
     if (instrumentId == INST_LUTE && luteTbl_) {
         v.sampleInc = v.baseFreq / 146.832f; // D3
     } else if (instrumentId == INST_HARP && harpTbl_) {
@@ -159,76 +220,101 @@ void SynthVoices::stopAll() {
 float SynthVoices::renderVoiceSample(Voice& v, float liveBendSemis, float liveVibOffset) {
     float tSec = static_cast<float>(v.ageSamples) / BB_SAMPLE_RATE;
     float totalBend = v.notePitchBendSemis + (v.isLiveNote ? (liveBendSemis + liveVibOffset) : 0.0f);
-    float pitchMult = (totalBend != 0.0f) ? fastSemisToMult(totalBend) : 1.0f;
 
-    float raw = 0.0f;
     bool isDrum = (v.instrumentId == INST_TAVERN_KIT || v.instrumentId == INST_CHIP_KIT);
-
     if (isDrum) {
         bool chip = (v.instrumentId == INST_CHIP_KIT);
+        float raw = 0.0f;
         switch (v.midiNote) {
             case DRUM_KICK: {
-                float sweepFreq = chip ? (52.0f + 180.0f * std::exp(-tSec * 42.0f))
-                                       : (48.0f + 115.0f * std::exp(-tSec * 28.0f));
+                // Handheld-tuned warm punchy kick (beater click + 175Hz -> 62Hz body + soft warmth)
+                float fStart = chip ? 240.0f : 175.0f;
+                float fEnd   = chip ? 56.0f  : 62.0f;
+                float sweepFreq = fEnd + (fStart - fEnd) * std::exp(-tSec * (chip ? 38.0f : 30.0f));
                 v.phase += sweepFreq / BB_SAMPLE_RATE;
                 if (v.phase >= 1.0f) v.phase -= 1.0f;
-                float osc = chip ? (1.0f - 4.0f * std::fabs(v.phase - 0.5f))
-                                 : std::sin(v.phase * TWO_PI);
-                raw = osc * std::exp(-tSec * (chip ? 16.0f : 11.0f)) * 1.35f;
-                if (tSec > 0.28f) v.active = false;
+                float body = chip ? (1.0f - 4.0f * std::fabs(v.phase - 0.5f))
+                                  : std::sin(v.phase * TWO_PI);
+                // Add subtle 2nd harmonic warmth so it punches on small 3DS speakers
+                body = std::tanh(body * 1.45f) * std::exp(-tSec * (chip ? 14.0f : 10.5f));
+                // Short wood-mallet click transient (5ms)
+                float click = (tSec < 0.008f)
+                    ? (nextWhiteNoise(v.rngState) * std::exp(-tSec * 380.0f) * 0.35f)
+                    : 0.0f;
+                raw = (body + click) * 1.25f;
+                if (tSec > 0.30f) v.active = false;
                 break;
             }
             case DRUM_TOM: {
-                float sweepFreq = 92.0f + 95.0f * std::exp(-tSec * 22.0f);
+                float sweepFreq = 105.0f + 100.0f * std::exp(-tSec * 24.0f);
                 v.phase += sweepFreq / BB_SAMPLE_RATE;
                 if (v.phase >= 1.0f) v.phase -= 1.0f;
-                raw = std::sin(v.phase * TWO_PI) * std::exp(-tSec * 12.0f);
-                if (tSec > 0.25f) v.active = false;
+                float skin = std::sin(v.phase * TWO_PI) + 0.25f * std::sin(v.phase * TWO_PI * 1.59f);
+                raw = skin * std::exp(-tSec * 11.5f) * 0.9f;
+                if (tSec > 0.26f) v.active = false;
                 break;
             }
             case DRUM_SNARE: {
-                float bodyFreq = chip ? 210.0f : 175.0f;
+                float bodyFreq = (chip ? 220.0f : 185.0f) + 75.0f * std::exp(-tSec * 45.0f);
                 v.phase += bodyFreq / BB_SAMPLE_RATE;
                 if (v.phase >= 1.0f) v.phase -= 1.0f;
-                float body = std::sin(v.phase * TWO_PI) * std::exp(-tSec * 24.0f);
-                float n = nextNoise(v.lfsrState) * std::exp(-tSec * (chip ? 18.0f : 15.0f));
-                raw = 0.45f * body + 0.65f * n;
-                if (tSec > 0.22f) v.active = false;
+                float body = std::sin(v.phase * TWO_PI) * std::exp(-tSec * 22.0f);
+                // Crisp band-shaped snare wire noise
+                float n = nextWhiteNoise(v.rngState);
+                v.lpfState  += 0.55f * (n - v.lpfState);
+                v.lpfState2 += 0.14f * (v.lpfState - v.lpfState2);
+                float wires = (v.lpfState - v.lpfState2) * std::exp(-tSec * (chip ? 19.0f : 14.5f));
+                raw = 0.50f * body + 0.85f * wires;
+                if (tSec > 0.24f) v.active = false;
                 break;
             }
             case DRUM_CLAP: {
-                float burst = (tSec < 0.032f) ? (std::fmod(tSec, 0.011f) < 0.005f ? 1.0f : 0.25f) : 1.0f;
-                float n = nextNoise(v.lfsrState);
-                v.lpfState += 0.35f * (n - v.lpfState);
-                raw = (n - 0.5f * v.lpfState) * burst * std::exp(-tSec * 14.0f);
-                if (tSec > 0.24f) v.active = false;
+                // Multi-tap tavern handclap (3 quick staggered bursts + warm room tail)
+                float burst = 1.0f;
+                if (tSec < 0.030f) {
+                    float m = std::fmod(tSec, 0.010f);
+                    burst = std::exp(-m * 240.0f);
+                }
+                float n = nextWhiteNoise(v.rngState);
+                v.lpfState  += 0.42f * (n - v.lpfState);
+                v.lpfState2 += 0.16f * (v.lpfState - v.lpfState2);
+                float bp = v.lpfState - v.lpfState2;
+                raw = bp * (0.45f + 0.95f * burst) * std::exp(-tSec * 13.0f) * 1.3f;
+                if (tSec > 0.26f) v.active = false;
                 break;
             }
             case DRUM_CLOSED_HAT:
             case DRUM_OPEN_HAT: {
-                float n = nextNoise(v.lfsrState);
+                float n = nextWhiteNoise(v.rngState);
+                v.lpfState += 0.55f * (n - v.lpfState);
                 float hp = n - v.lpfState;
-                v.lpfState += 0.65f * (n - v.lpfState);
-                float decayRate = (v.midiNote == DRUM_OPEN_HAT) ? 8.5f : 38.0f;
-                raw = hp * std::exp(-tSec * decayRate) * 0.85f;
-                if (tSec > ((v.midiNote == DRUM_OPEN_HAT) ? 0.38f : 0.09f)) v.active = false;
+                // Subtle metallic shimmer ring
+                v.phase  += 6420.0f / BB_SAMPLE_RATE; if (v.phase >= 1.0f) v.phase -= 1.0f;
+                v.phase2 += 8130.0f / BB_SAMPLE_RATE; if (v.phase2 >= 1.0f) v.phase2 -= 1.0f;
+                float metal = 0.22f * ((v.phase < 0.5f ? 1.0f : -1.0f) * (v.phase2 < 0.5f ? 1.0f : -1.0f));
+                float decayRate = (v.midiNote == DRUM_OPEN_HAT) ? 7.5f : 38.0f;
+                raw = (0.78f * hp + metal) * std::exp(-tSec * decayRate) * 0.72f;
+                if (tSec > ((v.midiNote == DRUM_OPEN_HAT) ? 0.42f : 0.09f)) v.active = false;
                 break;
             }
             case DRUM_TAMB: {
-                float n = nextNoise(v.lfsrState);
-                v.phase += 4300.0f / BB_SAMPLE_RATE;
-                if (v.phase >= 1.0f) v.phase -= 1.0f;
-                float ring = std::sin(v.phase * TWO_PI);
-                raw = (0.55f * n + 0.45f * ring) * std::exp(-tSec * 16.0f) * 0.7f;
-                if (tSec > 0.22f) v.active = false;
+                float n = nextWhiteNoise(v.rngState);
+                v.lpfState += 0.45f * (n - v.lpfState);
+                float hp = n - v.lpfState;
+                v.phase  += 5280.0f / BB_SAMPLE_RATE; if (v.phase >= 1.0f) v.phase -= 1.0f;
+                v.phase2 += 7410.0f / BB_SAMPLE_RATE; if (v.phase2 >= 1.0f) v.phase2 -= 1.0f;
+                float jingle = 0.35f * (std::sin(v.phase * TWO_PI) + std::sin(v.phase2 * TWO_PI));
+                raw = (0.65f * hp + jingle) * std::exp(-tSec * 15.0f) * 0.70f;
+                if (tSec > 0.25f) v.active = false;
                 break;
             }
             default: { // DRUM_SHAKER
-                float n = nextNoise(v.lfsrState);
+                float n = nextWhiteNoise(v.rngState);
+                v.lpfState += 0.50f * (n - v.lpfState);
                 float hp = n - v.lpfState;
-                v.lpfState += 0.5f * (n - v.lpfState);
-                raw = hp * std::exp(-tSec * 22.0f) * 0.65f;
-                if (tSec > 0.14f) v.active = false;
+                float swell = (tSec < 0.018f) ? (tSec / 0.018f) : 1.0f;
+                raw = hp * swell * std::exp(-tSec * 24.0f) * 0.60f;
+                if (tSec > 0.16f) v.active = false;
                 break;
             }
         }
@@ -236,7 +322,8 @@ float SynthVoices::renderVoiceSample(Voice& v, float liveBendSemis, float liveVi
         return raw * v.gain;
     }
 
-    // Melodic & Harmonic Instruments
+    // ---- Melodic & Harmonic Instruments ----
+
     // Gate countdown for sequenced notes
     if (!v.isLiveNote && v.samplesRemaining > 0) {
         v.samplesRemaining--;
@@ -245,10 +332,12 @@ float SynthVoices::renderVoiceSample(Voice& v, float liveBendSemis, float liveVi
         }
     }
 
-    // Envelope generator
+    // Smooth ADSR envelope tuned per instrument
     switch (v.envStage) {
         case ENV_ATTACK: {
-            float atkStep = (v.instrumentId == INST_OCARINA) ? 0.0028f : 0.012f;
+            float atkStep = 0.018f;
+            if (v.instrumentId == INST_OCARINA) atkStep = 0.0014f; // ~22ms gentle breath swell
+            else if (v.instrumentId == INST_HARP) atkStep = 0.025f;
             v.envLevel += atkStep;
             if (v.envLevel >= 1.0f) {
                 v.envLevel = 1.0f;
@@ -257,8 +346,17 @@ float SynthVoices::renderVoiceSample(Voice& v, float liveBendSemis, float liveVi
             break;
         }
         case ENV_DECAY: {
-            float sus = (v.instrumentId == INST_OCARINA || v.instrumentId == INST_PULSE_LEAD || v.instrumentId == INST_SUB_BASS) ? 0.75f : 0.45f;
-            v.envLevel -= 0.00025f;
+            float sus = 0.78f;
+            float decStep = 0.00018f;
+            if (v.instrumentId == INST_LUTE || v.instrumentId == INST_HARP || v.instrumentId == INST_UPRIGHT_BASS) {
+                // Sample tables already carry their natural acoustic decay
+                sus = 0.95f;
+                decStep = 0.00008f;
+            } else if (v.instrumentId == INST_PULSE_LEAD) {
+                sus = 0.62f;
+                decStep = 0.00035f;
+            }
+            v.envLevel -= decStep;
             if (v.envLevel <= sus) {
                 v.envLevel = sus;
                 v.envStage = ENV_SUSTAIN;
@@ -268,7 +366,9 @@ float SynthVoices::renderVoiceSample(Voice& v, float liveBendSemis, float liveVi
         case ENV_SUSTAIN:
             break;
         case ENV_RELEASE: {
-            float relStep = (v.instrumentId == INST_LUTE || v.instrumentId == INST_HARP) ? 0.00045f : 0.0012f;
+            float relStep = 0.0009f;
+            if (v.instrumentId == INST_LUTE || v.instrumentId == INST_HARP) relStep = 0.00028f; // Let strings ring!
+            else if (v.instrumentId == INST_OCARINA) relStep = 0.00065f; // Gentle breath taper
             v.envLevel -= relStep;
             if (v.envLevel <= 0.0f) {
                 v.envLevel = 0.0f;
@@ -283,49 +383,88 @@ float SynthVoices::renderVoiceSample(Voice& v, float liveBendSemis, float liveVi
             return 0.0f;
     }
 
-    // Sample-table instruments (Lute, Harp, Upright Bass)
+    float raw = 0.0f;
+    float pitchMult = (totalBend != 0.0f) ? fastSemisToMult(totalBend) : 1.0f;
+
+    // 1. Acoustic Sample-Table Instruments (Lute, Harp, Upright Bass)
     const int16_t* tbl = nullptr;
     uint32_t tblLen = 0;
-    if (v.instrumentId == INST_LUTE) { tbl = luteTbl_; tblLen = luteLen_; }
-    else if (v.instrumentId == INST_HARP) { tbl = harpTbl_; tblLen = harpLen_; }
+    if (v.instrumentId == INST_LUTE)         { tbl = luteTbl_; tblLen = luteLen_; }
+    else if (v.instrumentId == INST_HARP)    { tbl = harpTbl_; tblLen = harpLen_; }
     else if (v.instrumentId == INST_UPRIGHT_BASS) { tbl = bassTbl_; tblLen = bassLen_; }
 
-    if (tbl && tblLen > 2) {
+    if (tbl && tblLen > 4) {
         uint32_t idx0 = static_cast<uint32_t>(v.samplePos);
-        if (idx0 >= tblLen - 1) {
+        if (idx0 >= tblLen - 2) {
             v.active = false;
             return 0.0f;
         }
         float frac = v.samplePos - static_cast<float>(idx0);
-        float s0 = static_cast<float>(tbl[idx0]) / 32768.0f;
-        float s1 = static_cast<float>(tbl[idx0 + 1]) / 32768.0f;
+        float s0 = static_cast<float>(tbl[idx0]) * (1.0f / 32768.0f);
+        float s1 = static_cast<float>(tbl[idx0 + 1]) * (1.0f / 32768.0f);
         raw = s0 + frac * (s1 - s0);
+        // Gentle brightness polish on Lute/Bass
+        if (v.instrumentId == INST_UPRIGHT_BASS) {
+            raw *= 1.18f;
+        }
         v.samplePos += v.sampleInc * pitchMult;
-    } else {
-        // Procedural synthesis (Ocarina, Pulse Lead, Sub Bass, or table fallback)
-        v.phase += v.phaseInc * pitchMult;
+    } else if (v.instrumentId == INST_OCARINA) {
+        // Expressive Clay Ocarina: subtle pitch scoop on attack + natural delayed vibrato + warm breath chiff
+        float attackScoop = (tSec < 0.045f) ? (-0.22f * (1.0f - tSec / 0.045f)) : 0.0f;
+        float autoVibDepth = (tSec > 0.16f) ? std::min(0.14f, (tSec - 0.16f) * 0.45f) : 0.0f;
+        float autoVib = autoVibDepth * std::sin(tSec * 5.2f * TWO_PI);
+        float ocMult = fastSemisToMult(totalBend + attackScoop + autoVib);
+
+        v.phase += v.phaseInc * ocMult;
         if (v.phase >= 1.0f) v.phase -= std::floor(v.phase);
 
-        if (v.instrumentId == INST_OCARINA) {
-            // Pure vessel flute + gentle 2nd harmonic + breath attack puff
-            float s1 = std::sin(v.phase * TWO_PI);
-            float s2 = 0.14f * std::sin(v.phase * TWO_PI * 2.0f);
-            float breath = (tSec < 0.045f) ? (nextNoise(v.lfsrState) * 0.08f * (1.0f - tSec / 0.045f)) : 0.0f;
-            raw = (s1 + s2 + breath) * 0.9f;
-        } else if (v.instrumentId == INST_PULSE_LEAD) {
-            raw = (v.phase < 0.25f) ? 0.65f : -0.65f;
-            v.lpfState += 0.45f * (raw - v.lpfState);
-            raw = v.lpfState;
-        } else if (v.instrumentId == INST_SUB_BASS) {
-            float tri = 1.0f - 4.0f * std::fabs(v.phase - 0.5f);
-            float saw = 2.0f * v.phase - 1.0f;
-            float mix = 0.65f * tri + 0.35f * saw;
-            v.lpfState += 0.14f * (mix - v.lpfState);
-            raw = v.lpfState * 1.25f;
-        } else {
-            // Karplus-less fallback triangle
-            raw = 1.0f - 4.0f * std::fabs(v.phase - 0.5f);
-        }
+        float f1 = std::sin(v.phase * TWO_PI);
+        float f2 = 0.22f * std::sin(v.phase * TWO_PI * 2.0f);
+        float f3 = 0.05f * std::sin(v.phase * TWO_PI * 3.0f);
+
+        // Soft band-limited breath chiff (stronger on attack, gentle whisper during sustain)
+        float n = nextWhiteNoise(v.rngState);
+        v.lpfState += 0.28f * (n - v.lpfState);
+        v.lpfState2 += 0.09f * (v.lpfState - v.lpfState2);
+        float breathAmt = 0.035f + ((tSec < 0.06f) ? (0.12f * (1.0f - tSec / 0.06f)) : 0.0f);
+        float breath = (v.lpfState - v.lpfState2) * breathAmt;
+
+        raw = (f1 + f2 + f3) * 0.78f + breath;
+    } else if (v.instrumentId == INST_PULSE_LEAD) {
+        // Clean PolyBLEP Chiptune Pulse Lead + subtle detuned 2nd oscillator + filter pluck
+        float dt1 = v.phaseInc * pitchMult;
+        float dt2 = dt1 * 1.0035f; // +6 cents warm chorus detune
+        v.phase  += dt1; if (v.phase >= 1.0f) v.phase -= std::floor(v.phase);
+        v.phase2 += dt2; if (v.phase2 >= 1.0f) v.phase2 -= std::floor(v.phase2);
+
+        auto blepPulse = [](float p, float dt, float duty) {
+            float val = (p < duty) ? 1.0f : -1.0f;
+            val += polyBlep(p, dt);
+            float p2 = p - duty;
+            if (p2 < 0.0f) p2 += 1.0f;
+            val -= polyBlep(p2, dt);
+            return val;
+        };
+
+        float osc = 0.55f * blepPulse(v.phase, dt1, 0.25f) + 0.35f * blepPulse(v.phase2, dt2, 0.50f);
+        // Warm 2-pole low-pass filter sweep on attack
+        float cutoff = 0.22f + 0.45f * std::exp(-tSec * 9.0f);
+        v.lpfState  += cutoff * (osc - v.lpfState);
+        v.lpfState2 += cutoff * (v.lpfState - v.lpfState2);
+        raw = v.lpfState2 * 0.85f;
+    } else {
+        // INST_SUB_BASS: Fat PolyBLEP Saw + Sub Sine through warm resonant filter envelope
+        float dt = v.phaseInc * pitchMult;
+        v.phase += dt;
+        if (v.phase >= 1.0f) v.phase -= std::floor(v.phase);
+
+        float saw = (2.0f * v.phase - 1.0f) - polyBlep(v.phase, dt);
+        float sub = std::sin(v.phase * TWO_PI);
+        float mix = 0.55f * saw + 0.55f * sub;
+        float cutoff = 0.14f + 0.32f * std::exp(-tSec * 12.0f);
+        v.lpfState  += cutoff * (mix - v.lpfState);
+        v.lpfState2 += cutoff * (v.lpfState - v.lpfState2);
+        raw = std::tanh(v.lpfState2 * 1.4f) * 0.95f;
     }
 
     v.ageSamples++;
@@ -337,37 +476,51 @@ void SynthVoices::render(int16_t* outStereo, int numSamples, float liveBendSemis
     float peak = 0.0f;
     const float vibFreqInc = 5.5f / BB_SAMPLE_RATE;
 
+    // Subtle stereo panning per track (L, R gains) + reverb send level
+    static constexpr float PAN_L[BB_NUM_TRACKS]  = { 1.00f, 1.00f, 0.86f, 1.12f };
+    static constexpr float PAN_R[BB_NUM_TRACKS]  = { 1.00f, 1.00f, 1.12f, 0.86f };
+    static constexpr float REV_SEND[BB_NUM_TRACKS] = { 0.14f, 0.04f, 0.28f, 0.26f };
+
     for (int s = 0; s < numSamples; ++s) {
-        // Smooth Circle Pad pitch bend (5ms one-pole filter)
         smoothedLiveBend_ += 0.015f * (liveBendSemis - smoothedLiveBend_);
 
         vibPhase_ += vibFreqInc;
         if (vibPhase_ >= 1.0f) vibPhase_ -= 1.0f;
         float vibOffset = liveVibrato * 0.35f * std::sin(vibPhase_ * TWO_PI);
 
-        float mix = 0.0f;
+        float dryL = 0.0f;
+        float dryR = 0.0f;
+        float revIn = 0.0f;
+
         for (int i = 0; i < BB_MAX_VOICES; ++i) {
             Voice& v = voices_[i];
             if (!v.active) continue;
             if (trackMuted[v.trackIdx]) {
-                // Still advance age/envelope silently or skip
                 renderVoiceSample(v, smoothedLiveBend_, vibOffset);
                 continue;
             }
-            float vol = static_cast<float>(trackVolumes[v.trackIdx]) / 100.0f;
-            mix += renderVoiceSample(v, smoothedLiveBend_, vibOffset) * vol;
+            float vol = static_cast<float>(trackVolumes[v.trackIdx]) * 0.01f;
+            float smp = renderVoiceSample(v, smoothedLiveBend_, vibOffset) * vol;
+            dryL  += smp * PAN_L[v.trackIdx];
+            dryR  += smp * PAN_R[v.trackIdx];
+            revIn += smp * REV_SEND[v.trackIdx];
         }
 
-        // Soft limiter / tanh saturation to prevent harsh digital clipping
-        if (mix > 0.95f || mix < -0.95f) {
-            mix = std::tanh(mix);
-        }
-        float absMix = std::fabs(mix);
-        if (absMix > peak) peak = absMix;
+        float wetL = 0.0f, wetR = 0.0f;
+        reverb_.process(revIn, wetL, wetR);
 
-        int16_t pcm = static_cast<int16_t>(mix * 32767.0f);
-        outStereo[s * 2 + 0] = pcm;
-        outStereo[s * 2 + 1] = pcm;
+        float mixL = dryL + wetL * 0.42f;
+        float mixR = dryR + wetR * 0.42f;
+
+        // Warm soft-clip limiter
+        if (mixL > 0.90f || mixL < -0.90f) mixL = std::tanh(mixL);
+        if (mixR > 0.90f || mixR < -0.90f) mixR = std::tanh(mixR);
+
+        float absMax = std::max(std::fabs(mixL), std::fabs(mixR));
+        if (absMax > peak) peak = absMax;
+
+        outStereo[s * 2 + 0] = static_cast<int16_t>(mixL * 32767.0f);
+        outStereo[s * 2 + 1] = static_cast<int16_t>(mixR * 32767.0f);
     }
 
     lastPeak_ = peak;

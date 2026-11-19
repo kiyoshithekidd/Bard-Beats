@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """
 Generate original, IP-clean visual and audio assets for Bard Beats:
-- icon.png (48x48)
-- gfx/banner.png (256x128)
-- gfx/banner.wav (2.0s D-Dorian lute chord jingle, 22050 Hz PCM16)
-- romfs/audio/lute_tbl.bin (Karplus-Strong plucked lute wavetable, 32728.5 Hz PCM16)
-- romfs/audio/harp_tbl.bin (Karplus-Strong Celtic harp wavetable, 32728.5 Hz PCM16)
-- romfs/audio/bass_tbl.bin (Warm upright acoustic bass wavetable, 32728.5 Hz PCM16)
+- romfs/audio/lute_tbl.bin  (Woody Renaissance Bard's Lute wavetable, 32728.5 Hz PCM16)
+- romfs/audio/harp_tbl.bin  (Lush Celtic Minstrel Harp wavetable, 32728.5 Hz PCM16)
+- romfs/audio/bass_tbl.bin  (Warm Upright Acoustic Bass wavetable, 32728.5 Hz PCM16)
+- gfx/banner.wav            (2.0s D-Dorian lute arpeggio jingle, 22050 Hz PCM16)
 """
 
 import argparse
@@ -20,44 +18,110 @@ SAMPLE_RATE_3DS = 32728.498
 BANNER_SR = 22050
 
 
-def karplus_strong(freq_hz: float, duration_sec: float, sr: float,
-                   decay: float = 0.996, brightness: float = 0.5, seed: int = 42) -> list[float]:
+def biquad_filter(samples: list[float], sr: float, mode: str, freq: float, q: float, gain_db: float = 0.0) -> list[float]:
+    w0 = 2.0 * math.pi * freq / sr
+    cos_w0 = math.cos(w0)
+    sin_w0 = math.sin(w0)
+    alpha = sin_w0 / (2.0 * q)
+    A = 10.0 ** (gain_db / 40.0)
+
+    if mode == "lowpass":
+        b0 = (1.0 - cos_w0) * 0.5
+        b1 = 1.0 - cos_w0
+        b2 = (1.0 - cos_w0) * 0.5
+        a0 = 1.0 + alpha
+        a1 = -2.0 * cos_w0
+        a2 = 1.0 - alpha
+    elif mode == "peaking":
+        b0 = 1.0 + alpha * A
+        b1 = -2.0 * cos_w0
+        b2 = 1.0 - alpha * A
+        a0 = 1.0 + alpha / A
+        a1 = -2.0 * cos_w0
+        a2 = 1.0 - alpha / A
+    else:  # highpass
+        b0 = (1.0 + cos_w0) * 0.5
+        b1 = -(1.0 + cos_w0)
+        b2 = (1.0 + cos_w0) * 0.5
+        a0 = 1.0 + alpha
+        a1 = -2.0 * cos_w0
+        a2 = 1.0 - alpha
+
+    b0 /= a0; b1 /= a0; b2 /= a0
+    a1 /= a0; a2 /= a0
+
+    out = [0.0] * len(samples)
+    x1 = x2 = y1 = y2 = 0.0
+    for i, x0 in enumerate(samples):
+        y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+        out[i] = y0
+        x2, x1 = x1, x0
+        y2, y1 = y1, y0
+    return out
+
+
+def synth_plucked_string(freq_hz: float, duration_sec: float, sr: float,
+                         pick_pos: float, brightness: float, decay_sec: float,
+                         body_freq1: float, body_freq2: float, body_gain: float,
+                         inharmonicity: float = 0.00012, seed: int = 42) -> list[float]:
+    """
+    Physically-inspired modal + harmonic plucked string with pick-position comb,
+    frequency-dependent damping (higher harmonics decay faster like real gut/nylon strings),
+    and wooden body resonance formants. Zero aliasing, rich acoustic warmth.
+    """
     rng = random.Random(seed)
-    period = max(2, int(round(sr / freq_hz)))
-    # Plucked excitation: filtered noise burst + warm fundamental impulse
-    buf = []
-    for i in range(period):
-        noise = rng.uniform(-1.0, 1.0)
-        sine = 0.35 * math.sin(2.0 * math.pi * i / period)
-        buf.append(0.65 * noise + sine)
+    n_samples = int(round(duration_sec * sr))
+    out = [0.0] * n_samples
 
-    total_samples = int(round(duration_sec * sr))
-    out = []
-    idx = 0
-    prev = 0.0
-    for _ in range(total_samples):
-        cur = buf[idx]
-        nxt = buf[(idx + 1) % period]
-        filtered = decay * (brightness * cur + (1.0 - brightness) * nxt)
-        buf[idx] = 0.85 * filtered + 0.15 * prev
-        prev = buf[idx]
-        out.append(cur)
-        idx = (idx + 1) % period
+    # 1. Harmonic modal bank (up to Nyquist * 0.42 so pitch-shifting up 1 octave stays clean!)
+    max_harm = min(22, int((sr * 0.40) / freq_hz))
+    for k in range(1, max_harm + 1):
+        # Real plucked string harmonic amplitude modulated by pick position sin(k * pi * pick_pos)
+        pick_amp = abs(math.sin(k * math.pi * pick_pos))
+        amp = (pick_amp + 0.12) / (k ** (1.05 + (1.0 - brightness) * 0.75))
+        # Subtle string stiffness (inharmonicity) gives authentic acoustic shimmer
+        fk = freq_hz * k * math.sqrt(1.0 + inharmonicity * k * k)
+        # Higher harmonics decay much faster than the fundamental (nylon/gut warmth)
+        tau = decay_sec / (1.0 + 0.32 * (k - 1) ** 1.35)
+        phase0 = rng.uniform(0.0, 0.25)
+        w = 2.0 * math.pi * fk / sr
+        inv_tau = 1.0 / (tau * sr)
+        for i in range(n_samples):
+            # Fast 2.5ms pluck onset + natural exponential decay
+            env = math.exp(-i * inv_tau)
+            if i < 80:
+                env *= (i / 80.0)
+            out[i] += amp * env * math.sin(w * i + phase0)
 
-    # Normalize to 0.92 peak and apply gentle 10ms fade-out at end
+    # 2. Short woody finger/plectrum transient (first 12ms)
+    pluck_len = min(n_samples, int(0.014 * sr))
+    transient = [0.0] * pluck_len
+    for i in range(pluck_len):
+        t = i / float(pluck_len)
+        transient[i] = rng.uniform(-1.0, 1.0) * math.exp(-t * 6.5) * 0.28
+    transient = biquad_filter(transient, sr, "lowpass", 2400.0 * (0.5 + brightness), 0.9)
+    for i in range(pluck_len):
+        out[i] += transient[i]
+
+    # 3. Wooden soundbox body resonances (gives lute/harp/upright bass acoustic character)
+    out = biquad_filter(out, sr, "peaking", body_freq1, 1.8, body_gain)
+    out = biquad_filter(out, sr, "peaking", body_freq2, 2.2, body_gain * 0.7)
+    out = biquad_filter(out, sr, "highpass", 45.0, 0.707)
+
+    # Normalize to 0.92 peak and apply 15ms tail fade-out
     peak = max(abs(x) for x in out) or 1.0
-    fade_len = min(int(0.01 * sr), total_samples // 4)
-    for i in range(total_samples):
-        out[i] = (out[i] / peak) * 0.92
-        if i >= total_samples - fade_len:
-            out[i] *= (total_samples - i) / float(fade_len)
+    fade_len = min(int(0.015 * sr), n_samples // 4)
+    for i in range(n_samples):
+        v = (out[i] / peak) * 0.92
+        if i >= n_samples - fade_len:
+            v *= (n_samples - i) / float(fade_len)
+        out[i] = v
     return out
 
 
 def write_pcm16_bin(path: str, samples: list[float]) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
-        # 4-byte uint32 sample count header followed by int16 PCM samples
         f.write(struct.pack("<I", len(samples)))
         for s in samples:
             clamped = max(-1.0, min(1.0, s))
@@ -65,11 +129,27 @@ def write_pcm16_bin(path: str, samples: list[float]) -> None:
 
 
 def generate_audio_tables() -> None:
-    # Base pitch D3 (146.83 Hz) for Lute, D4 (293.66 Hz) for Harp, D2 (73.42 Hz) for Upright Bass
-    # Length = 1.2s for Lute/Harp, 0.9s for Bass -> ~210 KB total in RomFS
-    lute = karplus_strong(146.832, 1.1, SAMPLE_RATE_3DS, decay=0.9965, brightness=0.58, seed=101)
-    harp = karplus_strong(293.665, 1.2, SAMPLE_RATE_3DS, decay=0.9978, brightness=0.45, seed=202)
-    bass = karplus_strong(73.416, 0.85, SAMPLE_RATE_3DS, decay=0.9955, brightness=0.28, seed=303)
+    # 1. Bard's Lute (base D3 = 146.83 Hz): warm gut strings, woody rosette resonance
+    lute = synth_plucked_string(
+        freq_hz=146.832, duration_sec=1.15, sr=SAMPLE_RATE_3DS,
+        pick_pos=0.22, brightness=0.62, decay_sec=0.72,
+        body_freq1=280.0, body_freq2=780.0, body_gain=4.5,
+        inharmonicity=0.00018, seed=101
+    )
+    # 2. Minstrel Harp (base D4 = 293.66 Hz): sweet bell-clear sustain, plucked near middle
+    harp = synth_plucked_string(
+        freq_hz=293.665, duration_sec=1.35, sr=SAMPLE_RATE_3DS,
+        pick_pos=0.38, brightness=0.52, decay_sec=1.10,
+        body_freq1=340.0, body_freq2=1100.0, body_gain=3.5,
+        inharmonicity=0.00008, seed=202
+    )
+    # 3. Upright Acoustic Bass (base D2 = 73.42 Hz): punchy finger pluck + 2nd/3rd harmonics audible on 3DS speakers
+    bass = synth_plucked_string(
+        freq_hz=73.416, duration_sec=0.95, sr=SAMPLE_RATE_3DS,
+        pick_pos=0.28, brightness=0.34, decay_sec=0.58,
+        body_freq1=165.0, body_freq2=420.0, body_gain=6.0,
+        inharmonicity=0.00006, seed=303
+    )
 
     write_pcm16_bin("romfs/audio/lute_tbl.bin", lute)
     write_pcm16_bin("romfs/audio/harp_tbl.bin", harp)
@@ -78,21 +158,27 @@ def generate_audio_tables() -> None:
 
 def generate_banner_wav() -> None:
     os.makedirs("gfx", exist_ok=True)
-    # 1.8 second D minor / Dorian lute strum: D3, A3, F4, A4
+    # 1.9 second warm D-Dorian lute chord strum (D3, A3, D4, F4, A4)
     notes = [
         (146.83, 0.00),
-        (220.00, 0.07),
-        (349.23, 0.14),
-        (440.00, 0.21),
+        (220.00, 0.06),
+        (293.66, 0.12),
+        (349.23, 0.18),
+        (440.00, 0.24),
     ]
-    total_len = int(1.8 * BANNER_SR)
+    total_len = int(1.9 * BANNER_SR)
     mix = [0.0] * total_len
     for idx, (freq, delay) in enumerate(notes):
-        tone = karplus_strong(freq, 1.6, BANNER_SR, decay=0.996, brightness=0.55, seed=500 + idx)
+        tone = synth_plucked_string(
+            freq_hz=freq, duration_sec=1.6, sr=BANNER_SR,
+            pick_pos=0.24, brightness=0.60, decay_sec=0.85,
+            body_freq1=280.0, body_freq2=780.0, body_gain=4.0,
+            seed=500 + idx
+        )
         offset = int(delay * BANNER_SR)
         for i, val in enumerate(tone):
             if offset + i < total_len:
-                mix[offset + i] += val * 0.35
+                mix[offset + i] += val * 0.34
 
     peak = max(abs(x) for x in mix) or 1.0
     with wave.open("gfx/banner.wav", "wb") as wf:
@@ -101,65 +187,9 @@ def generate_banner_wav() -> None:
         wf.setframerate(BANNER_SR)
         frames = bytearray()
         for s in mix:
-            v = max(-1.0, min(1.0, (s / peak) * 0.85))
+            v = max(-1.0, min(1.0, (s / peak) * 0.88))
             frames.extend(struct.pack("<h", int(round(v * 32767.0))))
         wf.writeframes(bytes(frames))
-
-
-def draw_lute_emblem(draw, cx: int, cy: int, scale: float) -> None:
-    # Warm wooden lute body (teardrop / pear shape)
-    bw = int(14 * scale)
-    bh = int(16 * scale)
-    draw.ellipse([cx - bw, cy - bh + int(5 * scale), cx + bw, cy + bh + int(5 * scale)],
-                 fill=(181, 101, 45), outline=(240, 200, 120), width=max(1, int(scale)))
-    # Soundhole
-    sr = int(4 * scale)
-    draw.ellipse([cx - sr, cy + int(2 * scale) - sr, cx + sr, cy + int(2 * scale) + sr],
-                 fill=(42, 24, 16), outline=(230, 190, 110), width=1)
-    # Neck
-    nw = max(2, int(2.5 * scale))
-    draw.rectangle([cx - nw, cy - int(20 * scale), cx + nw, cy - int(6 * scale)],
-                   fill=(120, 68, 32), outline=(230, 190, 110))
-    # Peghead
-    draw.rectangle([cx - nw - 2, cy - int(24 * scale), cx + nw + 2, cy - int(19 * scale)],
-                   fill=(90, 48, 22), outline=(240, 200, 120))
-    # 4 Strings
-    for s in (-1.5, -0.5, 0.5, 1.5):
-        sx = int(cx + s * max(1, scale * 1.1))
-        draw.line([(sx, cy - int(19 * scale)), (sx, cy + int(14 * scale))],
-                  fill=(245, 228, 175), width=1)
-
-
-def generate_images() -> None:
-    from PIL import Image, ImageDraw
-    os.makedirs("gfx", exist_ok=True)
-
-    # 1. icon.png (48x48)
-    icon = Image.new("RGBA", (48, 48), (28, 20, 16, 255))
-    d = ImageDraw.Draw(icon)
-    d.rounded_rectangle([2, 2, 45, 45], radius=8, fill=(38, 26, 20, 255), outline=(224, 178, 92, 255), width=2)
-    draw_lute_emblem(d, 24, 26, 0.95)
-    icon.save("icon.png")
-
-    # 2. gfx/banner.png (256x128)
-    banner = Image.new("RGBA", (256, 128), (24, 17, 14, 255))
-    bd = ImageDraw.Draw(banner)
-    bd.rounded_rectangle([4, 4, 251, 123], radius=12, fill=(36, 24, 18, 255), outline=(224, 178, 92, 255), width=3)
-    # Subtle musical staff lines
-    for y in (42, 52, 62, 72, 82):
-        bd.line([(16, y), (240, y)], fill=(75, 55, 40, 255), width=1)
-    # Step sequencer blocks at bottom of banner
-    colors = [(217, 83, 79), (240, 173, 78), (92, 184, 92), (91, 192, 222)]
-    for step in range(12):
-        x = 92 + step * 12
-        y = 94
-        c = colors[step % 4] if step % 3 == 0 else (68, 50, 38)
-        bd.rounded_rectangle([x, y, x + 9, y + 14], radius=2, fill=c)
-    draw_lute_emblem(bd, 52, 64, 1.9)
-    # Pixel-crisp title text blocks
-    bd.text((94, 26), "BARD BEATS", fill=(244, 214, 138, 255))
-    bd.text((94, 46), "3DS LOOP MAKER & SYNTH", fill=(195, 170, 128, 255))
-    banner.save("gfx/banner.png")
 
 
 def main() -> None:
@@ -170,8 +200,7 @@ def main() -> None:
     generate_audio_tables()
     if not args.audio_only:
         generate_banner_wav()
-        generate_images()
-    print("Generated Bard Beats assets successfully.")
+    print("Generated upgraded Bard Beats audio assets successfully.")
 
 
 if __name__ == "__main__":
