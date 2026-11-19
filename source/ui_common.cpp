@@ -6,16 +6,26 @@
 namespace BardBeats {
 
 static C2D_TextBuf s_textBuf = nullptr;
+static C2D_SpriteSheet s_spriteSheet = nullptr;
 
 void uiInit() {
     s_textBuf = C2D_TextBufNew(4096);
+    s_spriteSheet = C2D_SpriteSheetLoad("romfs:/gfx/sprites.t3x");
 }
 
 void uiExit() {
+    if (s_spriteSheet) {
+        C2D_SpriteSheetFree(s_spriteSheet);
+        s_spriteSheet = nullptr;
+    }
     if (s_textBuf) {
         C2D_TextBufDelete(s_textBuf);
         s_textBuf = nullptr;
     }
+}
+
+C2D_SpriteSheet uiGetSpriteSheet() {
+    return s_spriteSheet;
 }
 
 void uiBeginFrame() {

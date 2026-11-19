@@ -1,0 +1,5 @@
+--atlas -f rgb565 -z auto
+instruments/lute.png
+instruments/ocarina.png
+instruments/harp.png
+instruments/drums.png

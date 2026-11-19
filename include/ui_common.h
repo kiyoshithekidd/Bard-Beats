@@ -43,6 +43,7 @@ namespace Colors {
 void uiInit();
 void uiExit();
 void uiBeginFrame();
+C2D_SpriteSheet uiGetSpriteSheet();
 
 void uiDrawText(float x, float y, float scaleX, float scaleY, uint32_t color, const char* text);
 void uiDrawTextCentered(const Rect& r, float scale, uint32_t color, const char* text);
