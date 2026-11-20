@@ -1,6 +1,7 @@
 #include "wifi_midi.h"
 #include <3ds.h>
 #include <arpa/inet.h>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <malloc.h>
