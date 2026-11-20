@@ -102,7 +102,7 @@ void uiDrawTopHeader(const AppState& state) {
         uiDrawTextCentered({314.0f + d, 5.0f, 78.0f, 18.0f}, 0.38f, Colors::CREAM_TEXT, "MIC REC");
     } else {
         int step = audioEngineGetCurrentStep();
-        char stepBuf[16];
+        char stepBuf[24];
         std::snprintf(stepBuf, sizeof(stepBuf), "STEP %02d", step + 1);
         uint32_t stepCol = state.isPlaying ? Colors::PLAYHEAD_LINE : Colors::MUTED_TEXT;
         uiDrawText(325.0f + d, 9.0f, 0.45f, 0.45f, stepCol, stepBuf);

@@ -610,8 +610,8 @@ static bool bounceArrangementToWav(const char* path, uint16_t bpm,
                             uint32_t vIdx = vocalPosQ1 >> 1;
                             if (vIdx < vocalSamples.size()) {
                                 int32_t vSmp = static_cast<int32_t>(vocalSamples[vIdx] * vocGain);
-                                int32_t l = std::max(-32767, std::min(32767, static_cast<int32_t>(chunkBuf[i * 2 + 0]) + vSmp));
-                                int32_t r2 = std::max(-32767, std::min(32767, static_cast<int32_t>(chunkBuf[i * 2 + 1]) + vSmp));
+                                int32_t l  = std::clamp<int32_t>(static_cast<int32_t>(chunkBuf[i * 2 + 0]) + vSmp, -32767, 32767);
+                                int32_t r2 = std::clamp<int32_t>(static_cast<int32_t>(chunkBuf[i * 2 + 1]) + vSmp, -32767, 32767);
                                 chunkBuf[i * 2 + 0] = static_cast<int16_t>(l);
                                 chunkBuf[i * 2 + 1] = static_cast<int16_t>(r2);
                                 vocalPosQ1++;
