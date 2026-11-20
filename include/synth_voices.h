@@ -85,7 +85,8 @@ public:
     void stopAll();
 
     void render(int16_t* outStereo, int numSamples, float liveBendSemis, float liveVibrato,
-                const uint8_t trackVolumes[BB_NUM_TRACKS], const uint8_t trackMuted[BB_NUM_TRACKS]);
+                const uint8_t trackVolumes[BB_NUM_TRACKS], const uint8_t trackMuted[BB_NUM_TRACKS],
+                float reverbMix = 0.38f);
 
     float getLastPeakLevel() const { return lastPeak_; }
 

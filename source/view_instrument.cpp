@@ -43,6 +43,9 @@ void viewInstrumentDrawTop(const AppState& state) {
     uint8_t inst = state.currentLoop.tracks[state.activeTrack].instrumentId;
     uint32_t trkCol = Colors::TRACK_COLORS[state.activeTrack];
 
+    float d = uiGet3DOffset();
+    float sx = STAGE_X + d;
+
     // Stage background frame
     C2D_DrawRectSolid(STAGE_X, STAGE_Y, 0.05f, 384.0f, 152.0f, Colors::BG_PANEL);
 
@@ -58,7 +61,7 @@ void viewInstrumentDrawTop(const AppState& state) {
             spriteIdx = sprites_drums_idx;
         }
         C2D_Image img = C2D_SpriteSheetGetImage(sheet, spriteIdx);
-        C2D_DrawImageAt(img, STAGE_X, STAGE_Y, 0.10f, nullptr, 1.0f, 1.0f);
+        C2D_DrawImageAt(img, sx, STAGE_Y, 0.10f, nullptr, 1.0f, 1.0f);
     }
 
     // Pixel-aligned interactive hit overlay synced to live notes
@@ -70,32 +73,28 @@ void viewInstrumentDrawTop(const AppState& state) {
         uint32_t coreCol = C2D_Color32(0xFF, 0xFF, 0xEE, alpha);
 
         if (inst == INST_HARP) {
-            // Vertical harp string pluck highlight!
-            float x0 = STAGE_X + HARP_STRINGS[deg][0];
+            float x0 = sx + HARP_STRINGS[deg][0];
             float y0 = STAGE_Y + HARP_STRINGS[deg][1];
-            float x1 = STAGE_X + HARP_STRINGS[deg][2];
+            float x1 = sx + HARP_STRINGS[deg][2];
             float y1 = STAGE_Y + HARP_STRINGS[deg][3];
             C2D_DrawLine(x0, y0, glowCol, x1, y1, glowCol, 4.5f, 0.24f);
             C2D_DrawLine(x0, y0, coreCol, x1, y1, coreCol, 1.8f, 0.26f);
-            // Spark at midpoint of plucked vertical string
             C2D_DrawCircleSolid((x0 + x1) * 0.5f, (y0 + y1) * 0.5f, 0.27f, 6.0f + (1.0f - pulse) * 4.0f, glowCol);
         } else if (inst == INST_OCARINA || inst == INST_PULSE_LEAD || inst == INST_SUB_BASS) {
-            // Exact tone hole glow on ocarina.png
-            float hx = STAGE_X + OCARINA_HOLES[deg][0];
+            float hx = sx + OCARINA_HOLES[deg][0];
             float hy = STAGE_Y + OCARINA_HOLES[deg][1];
             C2D_DrawCircleSolid(hx, hy, 0.25f, 10.0f + (1.0f - pulse) * 5.0f, glowCol);
             C2D_DrawCircleSolid(hx, hy, 0.27f, 5.0f, coreCol);
         } else if (inst == INST_TAVERN_KIT || inst == INST_CHIP_KIT) {
-            // Exact drum head mapping: Kick/Tom -> Left Bodhran, Snare/Clap -> Center Snare, Hats/Tamb/Shaker -> Right Tambourine
-            float dx = STAGE_X + 82.0f;
+            float dx = sx + 82.0f;
             float dy = STAGE_Y + 66.0f;
             float rad = 32.0f;
             if (deg == 2 || deg == 3) {
-                dx = STAGE_X + 204.0f;
+                dx = sx + 204.0f;
                 dy = STAGE_Y + 56.0f;
                 rad = 22.0f;
             } else if (deg >= 4) {
-                dx = STAGE_X + 318.0f;
+                dx = sx + 318.0f;
                 dy = STAGE_Y + 76.0f;
                 rad = 26.0f;
             }
@@ -103,12 +102,10 @@ void viewInstrumentDrawTop(const AppState& state) {
                                 C2D_Color32(0xFF, 0xE0, 0x66, static_cast<uint8_t>(pulse * 140.0f)));
             C2D_DrawCircleSolid(dx, dy, 0.27f, rad * 0.45f, glowCol);
         } else {
-            // Horizontal lute / bass string pluck aligned directly across nut -> soundhole -> bridge
             float sy = STAGE_Y + 64.0f + static_cast<float>(deg) * 3.4f;
-            C2D_DrawRectSolid(STAGE_X + 80.0f, sy - 1.5f, 0.24f, 240.0f, 3.5f, glowCol);
-            C2D_DrawRectSolid(STAGE_X + 80.0f, sy - 0.5f, 0.26f, 240.0f, 1.2f, coreCol);
-            // Pluck spark over the carved rosette soundhole
-            C2D_DrawCircleSolid(STAGE_X + 258.0f, sy, 0.27f, 6.0f + (1.0f - pulse) * 4.0f, glowCol);
+            C2D_DrawRectSolid(sx + 80.0f, sy - 1.5f, 0.24f, 240.0f, 3.5f, glowCol);
+            C2D_DrawRectSolid(sx + 80.0f, sy - 0.5f, 0.26f, 240.0f, 1.2f, coreCol);
+            C2D_DrawCircleSolid(sx + 258.0f, sy, 0.27f, 6.0f + (1.0f - pulse) * 4.0f, glowCol);
         }
     }
 

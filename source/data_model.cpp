@@ -162,7 +162,6 @@ void addStepNote(StepCell& cell, uint8_t midiNote, uint8_t velocity, int8_t bend
             return;
         }
     }
-    // Overwrite oldest slot if full
     cell.notes[0] = midiNote;
     cell.velocity = velocity;
     cell.pitchBendSemisQ4 = bendQ4;
@@ -172,7 +171,6 @@ void toggleStepNote(StepCell& cell, uint8_t midiNote, uint8_t velocity, int8_t b
     if (midiNote == 0) return;
     for (int i = 0; i < BB_MAX_POLY_PER_STEP; ++i) {
         if (cell.notes[i] == midiNote) {
-            // Remove note and compact
             for (int j = i; j < BB_MAX_POLY_PER_STEP - 1; ++j) {
                 cell.notes[j] = cell.notes[j + 1];
             }
@@ -190,13 +188,17 @@ void toggleStepNote(StepCell& cell, uint8_t midiNote, uint8_t velocity, int8_t b
 void initEmptyLoop(LoopFile& loop, uint16_t id, const char* name, uint16_t bpm) {
     std::memset(&loop, 0, sizeof(LoopFile));
     std::memcpy(loop.magic, "BBLP", 4);
-    loop.version = 1;
+    loop.version = 2;
     loop.loopId = id;
     std::snprintf(loop.name, sizeof(loop.name), "%s", name ? name : "New Loop");
     loop.bpm = bpm;
     loop.scaleId = SCALE_DORIAN;
     loop.rootNote = 2; // D
     loop.vocalVolume = 90;
+    loop.numBars = 1;
+    loop.swingPercent = 50;
+    loop.reverbMix = 38;
+    loop.vocalHighPass = 1;
 
     loop.tracks[TRACK_DRUMS].instrumentId   = INST_TAVERN_KIT;
     loop.tracks[TRACK_BASS].instrumentId    = INST_UPRIGHT_BASS;
@@ -205,17 +207,33 @@ void initEmptyLoop(LoopFile& loop, uint16_t id, const char* name, uint16_t bpm) 
 
     for (int t = 0; t < BB_NUM_TRACKS; ++t) {
         loop.tracks[t].volume = 85;
-        for (int s = 0; s < BB_STEPS_PER_LOOP; ++s) {
+        for (int s = 0; s < BB_MAX_STEPS; ++s) {
             clearStepCell(loop.tracks[t].steps[s]);
         }
     }
 }
 
+void migrateLoopV1ToV2(const LoopFileV1& v1, LoopFile& v2) {
+    initEmptyLoop(v2, v1.loopId, v1.name, v1.bpm);
+    v2.scaleId = v1.scaleId;
+    v2.rootNote = v1.rootNote;
+    v2.hasVocalClip = v1.hasVocalClip;
+    v2.vocalVolume = v1.vocalVolume;
+    v2.vocalMuted = v1.vocalMuted;
+    for (int t = 0; t < BB_NUM_TRACKS; ++t) {
+        v2.tracks[t].instrumentId = v1.tracks[t].instrumentId;
+        v2.tracks[t].volume       = v1.tracks[t].volume;
+        v2.tracks[t].muted        = v1.tracks[t].muted;
+        for (int s = 0; s < BB_STEPS_PER_LOOP; ++s) {
+            v2.tracks[t].steps[s] = v1.tracks[t].steps[s];
+        }
+    }
+}
+
 void initStarterLoop(LoopFile& loop, int presetIndex) {
-    switch (presetIndex % 4) {
+    switch (presetIndex % BB_NUM_STARTER_LOOPS) {
         case 0: {
             initEmptyLoop(loop, 1, "Tavern Bounce", 112);
-            // Drums: lively tavern groove
             for (int s = 0; s < 16; s += 2) {
                 addStepNote(loop.tracks[TRACK_DRUMS].steps[s], DRUM_TAMB, (s % 4 == 0) ? 115 : 80);
             }
@@ -225,21 +243,18 @@ void initStarterLoop(LoopFile& loop, int presetIndex) {
             addStepNote(loop.tracks[TRACK_DRUMS].steps[4], DRUM_SNARE, 110);
             addStepNote(loop.tracks[TRACK_DRUMS].steps[12], DRUM_SNARE, 115);
 
-            // Bass (D Dorian, octave -1)
             addStepNote(loop.tracks[TRACK_BASS].steps[0], getScaleNote(SCALE_DORIAN, 2, -1, 0), 105);
             addStepNote(loop.tracks[TRACK_BASS].steps[6], getScaleNote(SCALE_DORIAN, 2, -1, 4), 95);
             addStepNote(loop.tracks[TRACK_BASS].steps[8], getScaleNote(SCALE_DORIAN, 2, -1, 0), 105);
             addStepNote(loop.tracks[TRACK_BASS].steps[12], getScaleNote(SCALE_DORIAN, 2, -1, 3), 95);
             addStepNote(loop.tracks[TRACK_BASS].steps[14], getScaleNote(SCALE_DORIAN, 2, -1, 4), 90);
 
-            // Harmony (Lute chords)
             addStepNote(loop.tracks[TRACK_HARMONY].steps[0], getScaleNote(SCALE_DORIAN, 2, 0, 0), 90);
             addStepNote(loop.tracks[TRACK_HARMONY].steps[0], getScaleNote(SCALE_DORIAN, 2, 0, 2), 90);
             addStepNote(loop.tracks[TRACK_HARMONY].steps[4], getScaleNote(SCALE_DORIAN, 2, 0, 4), 85);
             addStepNote(loop.tracks[TRACK_HARMONY].steps[8], getScaleNote(SCALE_DORIAN, 2, 0, 0), 90);
             addStepNote(loop.tracks[TRACK_HARMONY].steps[12], getScaleNote(SCALE_DORIAN, 2, 0, 3), 85);
 
-            // Melody (Ocarina hook)
             addStepNote(loop.tracks[TRACK_MELODY].steps[0], getScaleNote(SCALE_DORIAN, 2, 0, 0), 100);
             addStepNote(loop.tracks[TRACK_MELODY].steps[3], getScaleNote(SCALE_DORIAN, 2, 0, 2), 95);
             addStepNote(loop.tracks[TRACK_MELODY].steps[6], getScaleNote(SCALE_DORIAN, 2, 0, 4), 105);
@@ -291,7 +306,7 @@ void initStarterLoop(LoopFile& loop, int presetIndex) {
             addStepNote(loop.tracks[TRACK_MELODY].steps[8], getScaleNote(SCALE_MAJOR, 2, 1, 4), 100);
             break;
         }
-        default: {
+        case 3: {
             initEmptyLoop(loop, 4, "Goblin March", 124);
             loop.scaleId = SCALE_MINOR_PENTA;
             addStepNote(loop.tracks[TRACK_DRUMS].steps[0], DRUM_KICK, 120);
@@ -304,6 +319,78 @@ void initStarterLoop(LoopFile& loop, int presetIndex) {
             addStepNote(loop.tracks[TRACK_BASS].steps[4], getScaleNote(SCALE_MINOR_PENTA, 2, -1, 1), 105);
             addStepNote(loop.tracks[TRACK_BASS].steps[8], getScaleNote(SCALE_MINOR_PENTA, 2, -1, 2), 110);
             addStepNote(loop.tracks[TRACK_BASS].steps[12], getScaleNote(SCALE_MINOR_PENTA, 2, -1, 4), 110);
+            break;
+        }
+        case 4: {
+            // 2-Bar (32-step) Bardic Ballad
+            initEmptyLoop(loop, 5, "Bardic Ballad", 96);
+            loop.numBars = 2;
+            loop.scaleId = SCALE_DORIAN;
+            for (int bar = 0; bar < 2; ++bar) {
+                int o = bar * 16;
+                addStepNote(loop.tracks[TRACK_DRUMS].steps[o + 0], DRUM_KICK, 110);
+                addStepNote(loop.tracks[TRACK_DRUMS].steps[o + 8], DRUM_TAMB, 90);
+                addStepNote(loop.tracks[TRACK_DRUMS].steps[o + 12], DRUM_SHAKER, 80);
+
+                addStepNote(loop.tracks[TRACK_HARMONY].steps[o + 0], getScaleNote(SCALE_DORIAN, 2, 0, bar == 0 ? 0 : 3), 95);
+                addStepNote(loop.tracks[TRACK_HARMONY].steps[o + 4], getScaleNote(SCALE_DORIAN, 2, 0, 2), 85);
+                addStepNote(loop.tracks[TRACK_HARMONY].steps[o + 8], getScaleNote(SCALE_DORIAN, 2, 0, 4), 90);
+                addStepNote(loop.tracks[TRACK_HARMONY].steps[o + 12], getScaleNote(SCALE_DORIAN, 2, 0, 2), 85);
+            }
+            addStepNote(loop.tracks[TRACK_MELODY].steps[0], getScaleNote(SCALE_DORIAN, 2, 0, 4), 105);
+            addStepNote(loop.tracks[TRACK_MELODY].steps[6], getScaleNote(SCALE_DORIAN, 2, 0, 5), 100);
+            addStepNote(loop.tracks[TRACK_MELODY].steps[10], getScaleNote(SCALE_DORIAN, 2, 0, 4), 95);
+            addStepNote(loop.tracks[TRACK_MELODY].steps[16], getScaleNote(SCALE_DORIAN, 2, 0, 3), 105);
+            addStepNote(loop.tracks[TRACK_MELODY].steps[22], getScaleNote(SCALE_DORIAN, 2, 0, 2), 100);
+            addStepNote(loop.tracks[TRACK_MELODY].steps[26], getScaleNote(SCALE_DORIAN, 2, 0, 0), 105);
+            break;
+        }
+        case 5: {
+            initEmptyLoop(loop, 6, "Shield Ward", 104);
+            loop.scaleId = SCALE_MAJOR;
+            loop.tracks[TRACK_HARMONY].instrumentId = INST_HARP;
+            addStepNote(loop.tracks[TRACK_DRUMS].steps[0], DRUM_KICK, 115);
+            addStepNote(loop.tracks[TRACK_DRUMS].steps[8], DRUM_CLAP, 105);
+            addStepNote(loop.tracks[TRACK_BASS].steps[0], getScaleNote(SCALE_MAJOR, 2, -1, 0), 110);
+            addStepNote(loop.tracks[TRACK_BASS].steps[8], getScaleNote(SCALE_MAJOR, 2, -1, 4), 110);
+            addStepNote(loop.tracks[TRACK_HARMONY].steps[0], getScaleNote(SCALE_MAJOR, 2, 0, 0), 100);
+            addStepNote(loop.tracks[TRACK_HARMONY].steps[4], getScaleNote(SCALE_MAJOR, 2, 0, 4), 100);
+            addStepNote(loop.tracks[TRACK_HARMONY].steps[8], getScaleNote(SCALE_MAJOR, 2, 0, 7), 110);
+            break;
+        }
+        case 6: {
+            initEmptyLoop(loop, 7, "Shadow Step", 132);
+            loop.scaleId = SCALE_MINOR;
+            loop.swingPercent = 58;
+            addStepNote(loop.tracks[TRACK_DRUMS].steps[0], DRUM_KICK, 110);
+            addStepNote(loop.tracks[TRACK_DRUMS].steps[4], DRUM_CLOSED_HAT, 95);
+            addStepNote(loop.tracks[TRACK_DRUMS].steps[6], DRUM_SHAKER, 85);
+            addStepNote(loop.tracks[TRACK_DRUMS].steps[8], DRUM_KICK, 105);
+            addStepNote(loop.tracks[TRACK_DRUMS].steps[12], DRUM_CLAP, 100);
+            addStepNote(loop.tracks[TRACK_BASS].steps[0], getScaleNote(SCALE_MINOR, 2, -1, 0), 115);
+            addStepNote(loop.tracks[TRACK_BASS].steps[3], getScaleNote(SCALE_MINOR, 2, -1, 2), 95);
+            addStepNote(loop.tracks[TRACK_BASS].steps[10], getScaleNote(SCALE_MINOR, 2, -1, 5), 105);
+            addStepNote(loop.tracks[TRACK_MELODY].steps[4], getScaleNote(SCALE_MINOR, 2, 0, 2), 95);
+            addStepNote(loop.tracks[TRACK_MELODY].steps[12], getScaleNote(SCALE_MINOR, 2, 0, 4), 100);
+            break;
+        }
+        default: {
+            initEmptyLoop(loop, 8, "Victory Fanfare", 128);
+            loop.scaleId = SCALE_MAJOR;
+            addStepNote(loop.tracks[TRACK_DRUMS].steps[0], DRUM_KICK, 125);
+            addStepNote(loop.tracks[TRACK_DRUMS].steps[4], DRUM_SNARE, 115);
+            addStepNote(loop.tracks[TRACK_DRUMS].steps[8], DRUM_KICK, 125);
+            addStepNote(loop.tracks[TRACK_DRUMS].steps[12], DRUM_SNARE, 120);
+            addStepNote(loop.tracks[TRACK_DRUMS].steps[14], DRUM_TAMB, 115);
+
+            addStepNote(loop.tracks[TRACK_HARMONY].steps[0], getScaleNote(SCALE_MAJOR, 2, 0, 0), 100);
+            addStepNote(loop.tracks[TRACK_HARMONY].steps[4], getScaleNote(SCALE_MAJOR, 2, 0, 2), 100);
+            addStepNote(loop.tracks[TRACK_HARMONY].steps[8], getScaleNote(SCALE_MAJOR, 2, 0, 4), 105);
+            addStepNote(loop.tracks[TRACK_HARMONY].steps[12], getScaleNote(SCALE_MAJOR, 2, 0, 7), 115);
+
+            addStepNote(loop.tracks[TRACK_MELODY].steps[0], getScaleNote(SCALE_MAJOR, 2, 0, 0), 110);
+            addStepNote(loop.tracks[TRACK_MELODY].steps[4], getScaleNote(SCALE_MAJOR, 2, 0, 4), 110);
+            addStepNote(loop.tracks[TRACK_MELODY].steps[8], getScaleNote(SCALE_MAJOR, 2, 0, 7), 120);
             break;
         }
     }
@@ -334,12 +421,30 @@ void initEmptySong(SongFile& song, uint16_t id, const char* name, uint16_t bpm) 
     song.songVocalMuted = 0;
 }
 
-void initStarterSong(SongFile& song) {
-    initEmptySong(song, 1, "Ballad of the Inn", 112);
-    song.numEntries = 3;
-    song.chain[0] = { 1, 2, SEC_INTRO,  0, {0, 0, 0} };
-    song.chain[1] = { 3, 2, SEC_VERSE,  0, {0, 0, 0} };
-    song.chain[2] = { 2, 2, SEC_CHORUS, 0, {0, 0, 0} };
+void initStarterSong(SongFile& song, int presetIndex) {
+    switch (presetIndex % BB_NUM_STARTER_SONGS) {
+        case 0:
+            initEmptySong(song, 1, "Ballad of the Inn", 112);
+            song.numEntries = 3;
+            song.chain[0] = { 1, 2, SEC_INTRO,  0, {0, 0, 0} };
+            song.chain[1] = { 3, 2, SEC_VERSE,  0, {0, 0, 0} };
+            song.chain[2] = { 2, 2, SEC_CHORUS, 0, {0, 0, 0} };
+            break;
+        case 1:
+            initEmptySong(song, 2, "Tavern Encore", 116);
+            song.numEntries = 3;
+            song.chain[0] = { 5, 1, SEC_INTRO,  0, {0, 0, 0} };
+            song.chain[1] = { 7, 2, SEC_VERSE,  0, {0, 0, 0} };
+            song.chain[2] = { 8, 2, SEC_OUTRO,  0, {0, 0, 0} };
+            break;
+        default:
+            initEmptySong(song, 3, "Quest Medley", 124);
+            song.numEntries = 3;
+            song.chain[0] = { 6, 2, SEC_INTRO,  0, {0, 0, 0} };
+            song.chain[1] = { 4, 2, SEC_BRIDGE, 0, {0, 0, 0} };
+            song.chain[2] = { 8, 2, SEC_CHORUS, 0, {0, 0, 0} };
+            break;
+    }
 }
 
 } // namespace BardBeats

@@ -1,6 +1,9 @@
 #include "audio_engine.h"
 #include "mic_recorder.h"
 #include <3ds.h>
+#ifdef BB_USE_OPENDSP
+#include <opendsp.h>
+#endif
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -8,7 +11,7 @@
 namespace BardBeats {
 
 static constexpr int NUM_WAVE_BUFS = 3;
-static constexpr int SAMPLES_PER_BUF = 320; // 9.77 ms at 32728.5 Hz (zero underruns on Old 3DS)
+static constexpr int SAMPLES_PER_BUF = 320; // 9.77 ms at 32728.5 Hz
 static constexpr int BYTES_PER_BUF = SAMPLES_PER_BUF * 2 * sizeof(int16_t);
 static constexpr int VOCAL_CHN = 1;
 
@@ -24,9 +27,11 @@ static constexpr int CMD_QUEUE_SIZE = 32;
 
 static struct {
     bool dspReady = false;
+    bool usingOpenDsp = false;
     std::atomic<bool> running{false};
     std::atomic<bool> playing{false};
     std::atomic<bool> songMode{false};
+    std::atomic<bool> hasPendingLoop{false};
     std::atomic<int>  currentStep{0};
     std::atomic<int>  songEntryIdx{0};
     std::atomic<int>  songRepeatIdx{0};
@@ -42,6 +47,7 @@ static struct {
     LightLock  vocalLock;
 
     LoopFile activeLoop;
+    LoopFile pendingLoop;
     SongFile activeSong;
     LoopFile songLoops[BB_MAX_SONG_CLIPS];
     int      songLoopCount = 0;
@@ -51,7 +57,6 @@ static struct {
     int16_t* audioMem = nullptr;
     ndspWaveBuf waveBufs[NUM_WAVE_BUFS];
 
-    // Vocal playback on ndsp Channel 1
     int16_t* vocalLinearMem = nullptr;
     uint32_t vocalSampleCount = 0;
     bool     vocalLooping = false;
@@ -95,7 +100,13 @@ static void stopVocalChannelLocked() {
     ndspChnWaveBufClear(VOCAL_CHN);
 }
 
-static void triggerStepNotes(const LoopFile& loop, int step, double samplesPerStep, uint8_t extraMuteMask) {
+static double calcSamplesForStep(double baseSamplesPerStep, int step, uint8_t swingPercent) {
+    double sw = (swingPercent >= 50 && swingPercent <= 66) ? static_cast<double>(swingPercent) : 50.0;
+    double mult = (step % 2 == 0) ? (sw / 50.0) : ((100.0 - sw) / 50.0);
+    return baseSamplesPerStep * mult;
+}
+
+static void triggerStepNotes(const LoopFile& loop, int step, double baseSamplesPerStep, uint8_t extraMuteMask) {
     for (int t = 0; t < BB_NUM_TRACKS; ++t) {
         if (loop.tracks[t].muted || (extraMuteMask & (1u << t))) continue;
         const StepCell& cell = loop.tracks[t].steps[step];
@@ -106,7 +117,7 @@ static void triggerStepNotes(const LoopFile& loop, int step, double samplesPerSt
         double gateMult = 0.85;
         if (instId == INST_LUTE || instId == INST_HARP) gateMult = 3.5;
         else if (instId == INST_UPRIGHT_BASS) gateMult = 2.0;
-        int gateSamples = static_cast<int>(samplesPerStep * (cell.gateLength > 0 ? cell.gateLength : 1) * gateMult);
+        int gateSamples = static_cast<int>(baseSamplesPerStep * (cell.gateLength > 0 ? cell.gateLength : 1) * gateMult);
         for (int p = 0; p < BB_MAX_POLY_PER_STEP; ++p) {
             uint8_t note = cell.notes[p];
             if (note != 0) {
@@ -165,30 +176,35 @@ static void fillAudioBuffer(int16_t* outStereo, int numSamples) {
         trackMuted[t] = (loopCopy.tracks[t].muted || (muteMask & (1u << t))) ? 1 : 0;
     }
 
+    float revMix = (loopCopy.reverbMix <= 100) ? (static_cast<float>(loopCopy.reverbMix) * 0.01f) : 0.38f;
     float bend = s_eng.liveBendSemis.load(std::memory_order_relaxed);
     float vib  = s_eng.liveVibrato.load(std::memory_order_relaxed);
     bool isPlaying = s_eng.playing.load(std::memory_order_relaxed);
 
     if (!isPlaying) {
         s_eng.firstStepTriggered = false;
-        s_eng.synth.render(outStereo, numSamples, bend, vib, trackVols, trackMuted);
+        s_eng.synth.render(outStereo, numSamples, bend, vib, trackVols, trackMuted, revMix);
         s_eng.peakLevel.store(s_eng.synth.getLastPeakLevel(), std::memory_order_relaxed);
         return;
     }
 
     if (bpm < 60 || bpm > 180) bpm = 110;
-    double samplesPerStep = (static_cast<double>(BB_SAMPLE_RATE) * 60.0) / (static_cast<double>(bpm) * 4.0);
+    double baseSamplesPerStep = (static_cast<double>(BB_SAMPLE_RATE) * 60.0) / (static_cast<double>(bpm) * 4.0);
+    int totalSteps = (loopCopy.numBars == 2) ? BB_MAX_STEPS : BB_STEPS_PER_LOOP;
 
     int rendered = 0;
     while (rendered < numSamples) {
+        int curStep = s_eng.currentStep.load(std::memory_order_relaxed);
+        if (curStep >= totalSteps) curStep = 0;
+
         if (!s_eng.firstStepTriggered) {
             s_eng.firstStepTriggered = true;
             s_eng.sampleAccum = 0.0;
-            int step = s_eng.currentStep.load(std::memory_order_relaxed);
-            triggerStepNotes(loopCopy, step, samplesPerStep, muteMask);
+            triggerStepNotes(loopCopy, curStep, baseSamplesPerStep, muteMask);
         }
 
-        double samplesToNext = samplesPerStep - s_eng.sampleAccum;
+        double curStepDur = calcSamplesForStep(baseSamplesPerStep, curStep, loopCopy.swingPercent);
+        double samplesToNext = curStepDur - s_eng.sampleAccum;
         int chunk = numSamples - rendered;
         bool stepBoundaryReached = false;
         if (samplesToNext <= static_cast<double>(chunk)) {
@@ -199,17 +215,31 @@ static void fillAudioBuffer(int16_t* outStereo, int numSamples) {
         }
 
         if (chunk > 0) {
-            s_eng.synth.render(&outStereo[rendered * 2], chunk, bend, vib, trackVols, trackMuted);
+            s_eng.synth.render(&outStereo[rendered * 2], chunk, bend, vib, trackVols, trackMuted, revMix);
             rendered += chunk;
             s_eng.sampleAccum += static_cast<double>(chunk);
         }
 
         if (stepBoundaryReached) {
-            s_eng.sampleAccum -= samplesPerStep;
+            s_eng.sampleAccum -= curStepDur;
             if (s_eng.sampleAccum < 0.0) s_eng.sampleAccum = 0.0;
-            int prevStep = s_eng.currentStep.load(std::memory_order_relaxed);
-            int nextStep = (prevStep + 1) % BB_STEPS_PER_LOOP;
+            int nextStep = (curStep + 1) % totalSteps;
             s_eng.currentStep.store(nextStep, std::memory_order_relaxed);
+
+            // Handle quantized next-bar loop switch in Spellbook
+            if (!isSong && nextStep == 0 && s_eng.hasPendingLoop.load(std::memory_order_relaxed)) {
+                LightLock_Lock(&s_eng.loopLock);
+                s_eng.activeLoop = s_eng.pendingLoop;
+                loopCopy = s_eng.activeLoop;
+                s_eng.hasPendingLoop.store(false, std::memory_order_relaxed);
+                LightLock_Unlock(&s_eng.loopLock);
+                totalSteps = (loopCopy.numBars == 2) ? BB_MAX_STEPS : BB_STEPS_PER_LOOP;
+                for (int t = 0; t < BB_NUM_TRACKS; ++t) {
+                    trackVols[t] = loopCopy.tracks[t].volume;
+                    trackMuted[t] = loopCopy.tracks[t].muted;
+                }
+                revMix = (loopCopy.reverbMix <= 100) ? (static_cast<float>(loopCopy.reverbMix) * 0.01f) : 0.38f;
+            }
 
             // Handle bar wrap in Song Mode
             if (isSong && nextStep == 0 && numEntries > 0) {
@@ -218,16 +248,19 @@ static void fillAudioBuffer(int16_t* outStereo, int numSamples) {
                     rep = 0;
                     int nextEntry = (s_eng.songEntryIdx.load(std::memory_order_relaxed) + 1) % numEntries;
                     s_eng.songEntryIdx.store(nextEntry, std::memory_order_relaxed);
-                    // Refresh loopCopy for the newly entered clip
                     LightLock_Lock(&s_eng.loopLock);
                     if (nextEntry < s_eng.songLoopCount) {
                         loopCopy = s_eng.songLoops[nextEntry];
                         muteMask = s_eng.activeSong.chain[nextEntry].muteMask;
                         curEntryRepeats = s_eng.activeSong.chain[nextEntry].repeatCount;
                         if (curEntryRepeats < 1) curEntryRepeats = 1;
+                        totalSteps = (loopCopy.numBars == 2) ? BB_MAX_STEPS : BB_STEPS_PER_LOOP;
+                        for (int t = 0; t < BB_NUM_TRACKS; ++t) {
+                            trackVols[t] = loopCopy.tracks[t].volume;
+                            trackMuted[t] = (loopCopy.tracks[t].muted || (muteMask & (1u << t))) ? 1 : 0;
+                        }
                     }
                     LightLock_Unlock(&s_eng.loopLock);
-                    // Restart whole-song vocal when song loops back to slot 0
                     if (nextEntry == 0) {
                         LightLock_Lock(&s_eng.vocalLock);
                         startVocalChannelLocked();
@@ -237,11 +270,12 @@ static void fillAudioBuffer(int16_t* outStereo, int numSamples) {
                 s_eng.songRepeatIdx.store(rep, std::memory_order_relaxed);
             }
 
-            triggerStepNotes(loopCopy, nextStep, samplesPerStep, muteMask);
+            triggerStepNotes(loopCopy, nextStep, baseSamplesPerStep, muteMask);
         }
     }
 
-    s_eng.stepFrac.store(static_cast<float>(s_eng.sampleAccum / samplesPerStep), std::memory_order_relaxed);
+    double finalStepDur = calcSamplesForStep(baseSamplesPerStep, s_eng.currentStep.load(std::memory_order_relaxed), loopCopy.swingPercent);
+    s_eng.stepFrac.store(static_cast<float>(s_eng.sampleAccum / finalStepDur), std::memory_order_relaxed);
     s_eng.peakLevel.store(s_eng.synth.getLastPeakLevel(), std::memory_order_relaxed);
 }
 
@@ -267,9 +301,17 @@ bool audioEngineInit() {
     LightLock_Init(&s_eng.vocalLock);
     s_eng.synth.init();
     initStarterLoop(s_eng.activeLoop, 0);
-    initStarterSong(s_eng.activeSong);
+    initStarterSong(s_eng.activeSong, 0);
 
-    Result rc = ndspInit();
+    Result rc = -1;
+#ifdef BB_USE_OPENDSP
+    rc = opendspInit();
+    if (R_SUCCEEDED(rc)) {
+        s_eng.usingOpenDsp = true;
+    }
+#else
+    rc = ndspInit();
+#endif
     if (R_FAILED(rc)) {
         s_eng.dspReady = false;
         return false;
@@ -278,7 +320,6 @@ bool audioEngineInit() {
     s_eng.dspReady = true;
     ndspSetOutputMode(NDSP_OUTPUT_STEREO);
 
-    // Channel 0: 16-voice software synth & drum mixer
     ndspChnReset(0);
     ndspChnSetInterp(0, NDSP_INTERP_LINEAR);
     ndspChnSetRate(0, BB_SAMPLE_RATE);
@@ -288,7 +329,6 @@ bool audioEngineInit() {
     mix[1] = 1.0f;
     ndspChnSetMix(0, mix);
 
-    // Channel 1: Dedicated Vocal Layer stream (16,364 Hz Mono PCM16)
     ndspChnReset(VOCAL_CHN);
     ndspChnSetInterp(VOCAL_CHN, NDSP_INTERP_POLYPHASE);
     ndspChnSetRate(VOCAL_CHN, static_cast<float>(BB_MIC_SAMPLE_RATE));
@@ -326,7 +366,12 @@ void audioEngineExit() {
         ndspSetCallback(nullptr, nullptr);
         ndspChnWaveBufClear(0);
         ndspChnWaveBufClear(VOCAL_CHN);
+#ifdef BB_USE_OPENDSP
+        if (s_eng.usingOpenDsp) opendspExit();
+        else ndspExit();
+#else
         ndspExit();
+#endif
         if (s_eng.audioMem) {
             linearFree(s_eng.audioMem);
             s_eng.audioMem = nullptr;
@@ -347,7 +392,19 @@ bool audioEngineIsDspReady() {
 void audioEngineSetLoop(const LoopFile& loop) {
     LightLock_Lock(&s_eng.loopLock);
     s_eng.activeLoop = loop;
+    s_eng.hasPendingLoop.store(false, std::memory_order_relaxed);
     LightLock_Unlock(&s_eng.loopLock);
+}
+
+void audioEngineQueueNextBarLoop(const LoopFile& loop) {
+    LightLock_Lock(&s_eng.loopLock);
+    s_eng.pendingLoop = loop;
+    s_eng.hasPendingLoop.store(true, std::memory_order_relaxed);
+    LightLock_Unlock(&s_eng.loopLock);
+}
+
+bool audioEngineHasQueuedLoop() {
+    return s_eng.hasPendingLoop.load(std::memory_order_relaxed);
 }
 
 void audioEngineSetSongMode(bool songMode) {
@@ -383,7 +440,7 @@ int audioEngineGetSongRepeatIndex() {
 }
 
 void audioEngineSetVocalLayer(const int16_t* samples, uint32_t sampleCount, bool looping,
-                              uint8_t volume, bool muted) {
+                              uint8_t volume, bool muted, bool highPass) {
     if (!s_eng.dspReady) return;
     LightLock_Lock(&s_eng.vocalLock);
     stopVocalChannelLocked();
@@ -396,7 +453,23 @@ void audioEngineSetVocalLayer(const int16_t* samples, uint32_t sampleCount, bool
         size_t bytes = static_cast<size_t>(sampleCount) * sizeof(int16_t);
         s_eng.vocalLinearMem = static_cast<int16_t*>(linearAlloc(bytes));
         if (s_eng.vocalLinearMem) {
-            std::memcpy(s_eng.vocalLinearMem, samples, bytes);
+            if (highPass) {
+                // 1-pole ~140 Hz high-pass filter removes breath thumps and 3DS chassis rumble
+                float prevIn = 0.0f;
+                float prevOut = 0.0f;
+                constexpr float R = 0.948f;
+                for (uint32_t i = 0; i < sampleCount; ++i) {
+                    float x = static_cast<float>(samples[i]);
+                    float y = x - prevIn + R * prevOut;
+                    prevIn = x;
+                    prevOut = y;
+                    if (y > 32767.0f) y = 32767.0f;
+                    if (y < -32767.0f) y = -32767.0f;
+                    s_eng.vocalLinearMem[i] = static_cast<int16_t>(y);
+                }
+            } else {
+                std::memcpy(s_eng.vocalLinearMem, samples, bytes);
+            }
             DSP_FlushDataCache(s_eng.vocalLinearMem, bytes);
             s_eng.vocalSampleCount = sampleCount;
             s_eng.vocalLooping = looping;

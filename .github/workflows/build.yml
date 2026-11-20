@@ -42,6 +42,12 @@ jobs:
             find /tmp/makerom -name makerom -type f -exec install -m 0755 {} /usr/local/bin/makerom \;
           fi
 
+      - name: Install OpenDSP (zero-setup DSP firmware)
+        run: |
+          git clone --depth 1 https://github.com/Cellenseres/OpenDSP.git /tmp/opendsp
+          make -C /tmp/opendsp/library -j$(nproc --all)
+          make -C /tmp/opendsp/library install
+
       - name: Generate RomFS audio wavetables
         run: python3 tools/gen_assets.py --audio-only
 

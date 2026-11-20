@@ -521,7 +521,8 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
 }
 
 void SynthVoices::render(int16_t* outStereo, int numSamples, float liveBendSemis, float liveVibrato,
-                         const uint8_t trackVolumes[BB_NUM_TRACKS], const uint8_t trackMuted[BB_NUM_TRACKS]) {
+                         const uint8_t trackVolumes[BB_NUM_TRACKS], const uint8_t trackMuted[BB_NUM_TRACKS],
+                         float reverbMix) {
     float peak = 0.0f;
     const float vibFreqInc = 5.5f / BB_SAMPLE_RATE;
 
@@ -564,8 +565,8 @@ void SynthVoices::render(int16_t* outStereo, int numSamples, float liveBendSemis
         reverb_.process(revIn, wetL, wetR);
 
         constexpr float MASTER_GAIN = 1.45f;
-        float mixL = fastSoftClip((dryL + wetL * 0.38f) * MASTER_GAIN);
-        float mixR = fastSoftClip((dryR + wetR * 0.38f) * MASTER_GAIN);
+        float mixL = fastSoftClip((dryL + wetL * reverbMix) * MASTER_GAIN);
+        float mixR = fastSoftClip((dryR + wetR * reverbMix) * MASTER_GAIN);
 
         float absMax = std::max(std::fabs(mixL), std::fabs(mixR));
         if (absMax > peak) peak = absMax;

@@ -7,29 +7,36 @@
 namespace BardBeats {
 
 static constexpr uint32_t SECTION_COLORS[6] = {
-    C2D_Color32(0x3E, 0x8E, 0xB8, 0xFF), // Intro: Blue
-    C2D_Color32(0x52, 0xA8, 0x58, 0xFF), // Verse: Green
-    C2D_Color32(0xD9, 0x62, 0x48, 0xFF), // Chorus: Ember
-    C2D_Color32(0x9A, 0x5E, 0xC4, 0xFF), // Bridge: Purple
-    C2D_Color32(0xC8, 0x9B, 0x3C, 0xFF), // Outro: Gold
-    C2D_Color32(0x6E, 0x62, 0x58, 0xFF)  // Part: Slate
+    C2D_Color32(0x3E, 0x8E, 0xB8, 0xFF),
+    C2D_Color32(0x52, 0xA8, 0x58, 0xFF),
+    C2D_Color32(0xD9, 0x62, 0x48, 0xFF),
+    C2D_Color32(0x9A, 0x5E, 0xC4, 0xFF),
+    C2D_Color32(0xC8, 0x9B, 0x3C, 0xFF),
+    C2D_Color32(0x6E, 0x62, 0x58, 0xFF)
 };
+
+static constexpr int SONGS_PER_PAGE = 4;
+
+static Rect getSongShelfCardRect(int slot) {
+    int col = slot % 2;
+    int row = slot / 2;
+    return { 6.0f + col * 156.0f, 70.0f + row * 50.0f, 152.0f, 46.0f };
+}
 
 void viewSongDrawTop(const AppState& state) {
     uiDrawTopHeader(state);
+    float d = uiGet3DOffset() * 0.8f;
 
-    // 1. Horizontal Song Arrangement Timeline (y: 44..130)
     C2D_DrawRectSolid(8.0f, 44.0f, 0.05f, 384.0f, 84.0f, Colors::BG_PANEL);
-    uiDrawText(14.0f, 48.0f, 0.38f, 0.38f, Colors::MUTED_TEXT, "SONG ARRANGEMENT (LIVE CLIPS)");
+    uiDrawText(14.0f + d * 0.4f, 48.0f, 0.38f, 0.38f, Colors::MUTED_TEXT, "SONG ARRANGEMENT (LIVE CLIPS)");
 
     int totalBars = state.getTotalSongBars();
     if (totalBars < 1) totalBars = 1;
     int playEntry = audioEngineGetSongEntryIndex();
     int playRep   = audioEngineGetSongRepeatIndex();
 
-    float timelineX = 14.0f;
+    float curX = 14.0f + d;
     float timelineW = 372.0f;
-    float curX = timelineX;
 
     for (int i = 0; i < state.currentSong.numEntries; ++i) {
         const SongChainEntry& e = state.currentSong.chain[i];
@@ -59,7 +66,6 @@ void viewSongDrawTop(const AppState& state) {
                        state.getLoopNameById(e.loopId));
         }
 
-        // Playhead sweep inside active clip
         if (isPlayingSlot) {
             float barFrac = (static_cast<float>(playRep) +
                              static_cast<float>(audioEngineGetCurrentStep()) / 16.0f) /
@@ -70,17 +76,17 @@ void viewSongDrawTop(const AppState& state) {
         curX += segW;
     }
 
-    // 2. Vocal Layer Waveform Ribbon (y: 136..204)
+    // Vocal Layer Waveform Ribbon
     C2D_DrawRectSolid(8.0f, 136.0f, 0.05f, 384.0f, 66.0f, Colors::BG_PANEL);
     const char* vocStatus = state.isRecordingVocal
         ? "VOCAL LAYER: RECORDING LIVE..."
         : (state.currentSong.hasSongVocal
                ? (state.currentSong.songVocalMuted ? "VOCAL LAYER (MUTED)" : "VOCAL LAYER (ACTIVE OVER SONG)")
                : "VOCAL LAYER: EMPTY (Tap REC VOC to sing over song)");
-    uiDrawText(14.0f, 140.0f, 0.36f, 0.36f,
+    uiDrawText(14.0f + d * 0.4f, 140.0f, 0.36f, 0.36f,
                state.isRecordingVocal ? Colors::RED_REC : Colors::GOLD_TEXT, vocStatus);
 
-    float waveX = 14.0f;
+    float waveX = 14.0f + d * 0.6f;
     float waveW = 372.0f;
     float barW  = waveW / BB_WAVE_BARS;
     float midY  = 178.0f;
@@ -102,21 +108,73 @@ void viewSongDrawTop(const AppState& state) {
 }
 
 void viewSongDrawBottom(const AppState& state) {
-    // Row 1: Master Tempo, Rename, Vocal Mute / Clear (y: 68..92)
-    Rect btnBpmDn   = {  4.0f, 68.0f, 40.0f, 24.0f };
-    Rect btnBpmUp   = { 46.0f, 68.0f, 40.0f, 24.0f };
-    Rect btnRename  = { 90.0f, 68.0f, 64.0f, 24.0f };
-    Rect btnVocMute = {158.0f, 68.0f, 78.0f, 24.0f };
-    Rect btnVocClr  = {240.0f, 68.0f, 76.0f, 24.0f };
+    if (state.showMixDrawer) {
+        uiDrawMixDrawer(state);
+        return;
+    }
 
-    uiDrawButton(btnBpmDn, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-BPM", 0.36f);
-    uiDrawButton(btnBpmUp, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+BPM", 0.36f);
-    uiDrawButton(btnRename, Colors::BG_CARD_ALT, Colors::BORDER_WOOD, Colors::GOLD_TEXT, "NAME", 0.36f);
+    if (state.showSongShelf) {
+        // Multiple Songs Shelf (#2)
+        int total = static_cast<int>(state.savedSongs.size());
+        int totalPages = (total + SONGS_PER_PAGE - 1) / SONGS_PER_PAGE;
+        if (totalPages < 1) totalPages = 1;
+        int page = state.songShelfPage;
+        if (page >= totalPages) page = totalPages - 1;
+        if (page < 0) page = 0;
+
+        int startIdx = page * SONGS_PER_PAGE;
+        for (int i = 0; i < SONGS_PER_PAGE; ++i) {
+            int idx = startIdx + i;
+            Rect r = getSongShelfCardRect(i);
+            if (idx < total) {
+                const SongSummary& s = state.savedSongs[idx];
+                bool isCur = (s.songId == state.currentSong.songId);
+                uiDrawButton(r, isCur ? Colors::BLUE_ACTION : Colors::BG_CARD,
+                             isCur ? Colors::GOLD_TEXT : Colors::BORDER_WOOD, Colors::CREAM_TEXT, nullptr);
+                uiDrawText(r.x + 8.0f, r.y + 6.0f, 0.40f, 0.40f, Colors::GOLD_TEXT, s.name);
+                char sub[32];
+                std::snprintf(sub, sizeof(sub), "%u BPM | %u Clips", s.bpm, s.numEntries);
+                uiDrawText(r.x + 8.0f, r.y + 24.0f, 0.34f, 0.34f, Colors::CREAM_TEXT, sub);
+            } else {
+                uiDrawButton(r, Colors::BG_DARK, Colors::BG_PANEL, Colors::MUTED_TEXT, "(Empty)", 0.36f);
+            }
+        }
+
+        Rect btnNew  = {  4.0f, 173.0f, 64.0f, 28.0f };
+        Rect btnWav  = { 72.0f, 173.0f, 68.0f, 28.0f };
+        Rect btnDel  = {144.0f, 173.0f, 48.0f, 28.0f };
+        Rect btnPrev = {196.0f, 173.0f, 28.0f, 28.0f };
+        Rect btnNext = {228.0f, 173.0f, 28.0f, 28.0f };
+        Rect btnBack = {260.0f, 173.0f, 56.0f, 28.0f };
+
+        uiDrawButton(btnNew,  Colors::GREEN_PLAY,  Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+NEW", 0.36f);
+        uiDrawButton(btnWav,  Colors::BLUE_ACTION, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "EXP.WAV", 0.33f);
+        uiDrawButton(btnDel,  Colors::BG_CARD,     Colors::RED_REC,     Colors::RED_REC,    "DEL", 0.34f);
+        uiDrawButton(btnPrev, Colors::BG_CARD,     Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "<", 0.40f);
+        uiDrawButton(btnNext, Colors::BG_CARD,     Colors::BORDER_WOOD, Colors::GOLD_TEXT,  ">", 0.40f);
+        uiDrawButton(btnBack, Colors::BG_CARD_ALT, Colors::GOLD_TEXT,   Colors::GOLD_TEXT,  "BACK", 0.36f);
+        return;
+    }
+
+    // Row 1: Master Tempo, Songs Shelf, Rename, Vocal Mute/Clear, Mix (y: 68..92)
+    Rect btnBpmDn   = {  4.0f, 68.0f, 34.0f, 24.0f };
+    Rect btnBpmUp   = { 40.0f, 68.0f, 34.0f, 24.0f };
+    Rect btnSongs   = { 76.0f, 68.0f, 52.0f, 24.0f };
+    Rect btnRename  = {130.0f, 68.0f, 44.0f, 24.0f };
+    Rect btnVocMute = {176.0f, 68.0f, 54.0f, 24.0f };
+    Rect btnVocClr  = {232.0f, 68.0f, 44.0f, 24.0f };
+    Rect btnMix     = {278.0f, 68.0f, 38.0f, 24.0f };
+
+    uiDrawButton(btnBpmDn, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-BPM", 0.32f);
+    uiDrawButton(btnBpmUp, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+BPM", 0.32f);
+    uiDrawButton(btnSongs, Colors::PURPLE_SPELL, Colors::GOLD_TEXT, Colors::CREAM_TEXT, "SONGS", 0.32f);
+    uiDrawButton(btnRename, Colors::BG_CARD_ALT, Colors::BORDER_WOOD, Colors::GOLD_TEXT, "NAME", 0.32f);
     uiDrawButton(btnVocMute,
                  state.currentSong.songVocalMuted ? Colors::RED_REC : Colors::BG_CARD,
                  Colors::BORDER_WOOD, Colors::CREAM_TEXT,
-                 state.currentSong.songVocalMuted ? "UNMUTE V" : "MUTE VOC", 0.34f);
-    uiDrawButton(btnVocClr, Colors::BG_CARD, Colors::RED_REC, Colors::RED_REC, "CLR VOC", 0.34f);
+                 state.currentSong.songVocalMuted ? "UNMUTE" : "MUTE V", 0.30f);
+    uiDrawButton(btnVocClr, Colors::BG_CARD, Colors::RED_REC, Colors::RED_REC, "CLRV", 0.30f);
+    uiDrawButton(btnMix, Colors::BG_CARD_ALT, Colors::GOLD_TEXT, Colors::GOLD_TEXT, "MIX", 0.32f);
 
     // Row 2: Selected Clip Card + Prev/Next Slot Selector (y: 96..158)
     Rect btnPrevSlot = {  4.0f, 98.0f, 36.0f, 58.0f };
@@ -141,7 +199,6 @@ void viewSongDrawBottom(const AppState& state) {
         std::snprintf(loopLbl, sizeof(loopLbl), "Loop: %s", state.getLoopNameById(e.loopId));
         uiDrawText(cardRect.x + 8.0f, cardRect.y + 26.0f, 0.40f, 0.40f, Colors::CREAM_TEXT, loopLbl);
 
-        // Quick repeat & section tag pills inside card right side
         Rect btnRepDn = { cardRect.x + 150.0f, cardRect.y + 30.0f, 34.0f, 22.0f };
         Rect btnRepUp = { cardRect.x + 188.0f, cardRect.y + 30.0f, 34.0f, 22.0f };
         uiDrawButton(btnRepDn, Colors::BG_DARK, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-x", 0.36f);
@@ -166,14 +223,48 @@ void viewSongDrawBottom(const AppState& state) {
 }
 
 void viewSongHandleTouch(AppState& state, float tx, float ty, bool isJustPressed) {
+    if (state.showMixDrawer) {
+        uiHandleMixDrawerTouch(state, tx, ty, isJustPressed, false);
+        return;
+    }
     if (!isJustPressed) return;
 
-    // Row 1
-    Rect btnBpmDn   = {  4.0f, 68.0f, 40.0f, 24.0f };
-    Rect btnBpmUp   = { 46.0f, 68.0f, 40.0f, 24.0f };
-    Rect btnRename  = { 90.0f, 68.0f, 64.0f, 24.0f };
-    Rect btnVocMute = {158.0f, 68.0f, 78.0f, 24.0f };
-    Rect btnVocClr  = {240.0f, 68.0f, 76.0f, 24.0f };
+    if (state.showSongShelf) {
+        int total = static_cast<int>(state.savedSongs.size());
+        int totalPages = (total + SONGS_PER_PAGE - 1) / SONGS_PER_PAGE;
+        if (totalPages < 1) totalPages = 1;
+
+        for (int i = 0; i < SONGS_PER_PAGE; ++i) {
+            int idx = state.songShelfPage * SONGS_PER_PAGE + i;
+            if (idx < total && getSongShelfCardRect(i).contains(tx, ty)) {
+                state.loadSongById(state.savedSongs[idx].songId);
+                return;
+            }
+        }
+
+        Rect btnNew  = {  4.0f, 173.0f, 64.0f, 28.0f };
+        Rect btnWav  = { 72.0f, 173.0f, 68.0f, 28.0f };
+        Rect btnDel  = {144.0f, 173.0f, 48.0f, 28.0f };
+        Rect btnPrev = {196.0f, 173.0f, 28.0f, 28.0f };
+        Rect btnNext = {228.0f, 173.0f, 28.0f, 28.0f };
+        Rect btnBack = {260.0f, 173.0f, 56.0f, 28.0f };
+
+        if (btnNew.contains(tx, ty))       state.createNewSong();
+        else if (btnWav.contains(tx, ty))  state.exportCurrentSongWav();
+        else if (btnDel.contains(tx, ty))  state.deleteSongById(state.currentSong.songId);
+        else if (btnPrev.contains(tx, ty)) { if (state.songShelfPage > 0) state.songShelfPage--; }
+        else if (btnNext.contains(tx, ty)) { if (state.songShelfPage + 1 < totalPages) state.songShelfPage++; }
+        else if (btnBack.contains(tx, ty)) state.showSongShelf = false;
+        return;
+    }
+
+    Rect btnBpmDn   = {  4.0f, 68.0f, 34.0f, 24.0f };
+    Rect btnBpmUp   = { 40.0f, 68.0f, 34.0f, 24.0f };
+    Rect btnSongs   = { 76.0f, 68.0f, 52.0f, 24.0f };
+    Rect btnRename  = {130.0f, 68.0f, 44.0f, 24.0f };
+    Rect btnVocMute = {176.0f, 68.0f, 54.0f, 24.0f };
+    Rect btnVocClr  = {232.0f, 68.0f, 44.0f, 24.0f };
+    Rect btnMix     = {278.0f, 68.0f, 38.0f, 24.0f };
 
     if (btnBpmDn.contains(tx, ty)) {
         if (state.currentSong.bpm > 60) state.currentSong.bpm -= 4;
@@ -183,6 +274,11 @@ void viewSongHandleTouch(AppState& state, float tx, float ty, bool isJustPressed
     if (btnBpmUp.contains(tx, ty)) {
         if (state.currentSong.bpm < 180) state.currentSong.bpm += 4;
         state.syncSongToAudio();
+        return;
+    }
+    if (btnSongs.contains(tx, ty)) {
+        state.refreshSavedSongs();
+        state.showSongShelf = true;
         return;
     }
     if (btnRename.contains(tx, ty)) {
@@ -197,8 +293,11 @@ void viewSongHandleTouch(AppState& state, float tx, float ty, bool isJustPressed
         state.clearVocalTake(true);
         return;
     }
+    if (btnMix.contains(tx, ty)) {
+        state.showMixDrawer = true;
+        return;
+    }
 
-    // Row 2: Slot Selector & Repeat Steppers
     Rect btnPrevSlot = {  4.0f, 98.0f, 36.0f, 58.0f };
     Rect cardRect    = { 44.0f, 98.0f, 232.0f, 58.0f };
     Rect btnNextSlot = {280.0f, 98.0f, 36.0f, 58.0f };
@@ -227,28 +326,22 @@ void viewSongHandleTouch(AppState& state, float tx, float ty, bool isJustPressed
         }
     }
 
-    // Row 3: Clip Actions
     Rect btnAdd   = {  4.0f, 164.0f, 54.0f, 36.0f };
     Rect btnCopy  = { 61.0f, 164.0f, 76.0f, 36.0f };
     Rect btnEdit  = {140.0f, 164.0f, 70.0f, 36.0f };
     Rect btnSec   = {213.0f, 164.0f, 56.0f, 36.0f };
     Rect btnDel   = {272.0f, 164.0f, 44.0f, 36.0f };
 
-    if (btnAdd.contains(tx, ty)) {
-        state.addCurrentLoopToSong();
-    } else if (btnCopy.contains(tx, ty)) {
-        state.copyAndTweakSongSlot(state.selectedSongSlot);
-    } else if (btnEdit.contains(tx, ty)) {
-        state.editSongSlotLoop(state.selectedSongSlot);
-    } else if (btnSec.contains(tx, ty)) {
+    if (btnAdd.contains(tx, ty))       state.addCurrentLoopToSong();
+    else if (btnCopy.contains(tx, ty)) state.copyAndTweakSongSlot(state.selectedSongSlot);
+    else if (btnEdit.contains(tx, ty)) state.editSongSlotLoop(state.selectedSongSlot);
+    else if (btnSec.contains(tx, ty)) {
         if (state.currentSong.numEntries > 0 && state.selectedSongSlot < state.currentSong.numEntries) {
             SongChainEntry& e = state.currentSong.chain[state.selectedSongSlot];
             e.sectionTag = static_cast<SectionTag>((static_cast<int>(e.sectionTag) + 1) % 6);
             state.syncSongToAudio();
         }
-    } else if (btnDel.contains(tx, ty)) {
-        state.deleteSongSlot(state.selectedSongSlot);
-    }
+    } else if (btnDel.contains(tx, ty)) state.deleteSongSlot(state.selectedSongSlot);
 }
 
 } // namespace BardBeats

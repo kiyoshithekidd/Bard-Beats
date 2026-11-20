@@ -44,6 +44,8 @@ void uiInit();
 void uiExit();
 void uiBeginFrame();
 C2D_SpriteSheet uiGetSpriteSheet();
+void uiSet3DOffset(float offsetPx);
+float uiGet3DOffset();
 
 void uiDrawText(float x, float y, float scaleX, float scaleY, uint32_t color, const char* text);
 void uiDrawTextCentered(const Rect& r, float scale, uint32_t color, const char* text);
@@ -57,5 +59,9 @@ void uiDrawTopFourTrackOverview(const AppState& state, float yStart, float heigh
 // Bottom-screen persistent bars (Transport y:0..34, Track Bar y:36..66, Nav Tabs y:206..240)
 void uiDrawBottomChrome(const AppState& state);
 bool uiHandleBottomChromeTouch(AppState& state, float tx, float ty);
+
+// Mix & Settings Drawer (y: 66..206)
+void uiDrawMixDrawer(const AppState& state);
+bool uiHandleMixDrawerTouch(AppState& state, float tx, float ty, bool isJustPressed, bool isHeld);
 
 } // namespace BardBeats

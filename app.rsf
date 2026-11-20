@@ -130,6 +130,7 @@ AccessControlInfo:
     - mic:u
     - ndm:u
     - ptm:u
+    - soc:U
 
 SystemControlInfo:
   SaveDataSize            : 0K

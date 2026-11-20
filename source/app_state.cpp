@@ -1,6 +1,7 @@
 #include "app_state.h"
 #include "audio_engine.h"
 #include "mic_recorder.h"
+#include "wifi_midi.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -22,19 +23,22 @@ void AppState::init() {
 
     if (!savedSongs.empty()) {
         if (!storageLoadSong(savedSongs[0].songId, currentSong)) {
-            initStarterSong(currentSong);
+            initStarterSong(currentSong, 0);
         }
     } else {
-        initStarterSong(currentSong);
+        initStarterSong(currentSong, 0);
     }
 
     hasUndo = false;
+    gridBarPage = 0;
     activeView = VIEW_GRID;
     activeTrack = TRACK_MELODY;
     octaveOffset = 0;
     isPlaying = false;
     isRecording = false;
     editingFromSong = false;
+    showSongShelf = false;
+    showMixDrawer = false;
 
     audioEngineSetSongMode(false);
     syncAudioLoop();
@@ -59,6 +63,7 @@ void AppState::switchView(ViewMode newView) {
     if (isRecordingVocal) {
         stopVocalRecording(true);
     }
+    showMixDrawer = false;
     if (activeView == newView) return;
 
     bool enteringSong = (newView == VIEW_SONG);
@@ -68,11 +73,13 @@ void AppState::switchView(ViewMode newView) {
     if (enteringSong) {
         isRecording = false;
         editingFromSong = false;
+        showSongShelf = false;
         syncSongToAudio();
         audioEngineSetSongMode(true);
         audioEngineResetPlayhead();
         loadActiveVocalForCurrentMode();
     } else if (leavingSong) {
+        showSongShelf = false;
         audioEngineSetSongMode(false);
         audioEngineResetPlayhead();
         loadActiveVocalForCurrentMode();
@@ -145,6 +152,50 @@ void AppState::syncAudioLoop() {
     audioEngineSetLoop(currentLoop);
 }
 
+void AppState::toggleLoopBars() {
+    if (currentLoop.numBars == 1) {
+        currentLoop.numBars = 2;
+        // Copy bar 1 into bar 2 if bar 2 is empty so the groove continues immediately
+        bool bar2Empty = true;
+        for (int t = 0; t < BB_NUM_TRACKS && bar2Empty; ++t) {
+            for (int s = 16; s < BB_MAX_STEPS; ++s) {
+                if (stepHasAnyNote(currentLoop.tracks[t].steps[s])) {
+                    bar2Empty = false;
+                    break;
+                }
+            }
+        }
+        if (bar2Empty) {
+            for (int t = 0; t < BB_NUM_TRACKS; ++t) {
+                for (int s = 0; s < 16; ++s) {
+                    currentLoop.tracks[t].steps[16 + s] = currentLoop.tracks[t].steps[s];
+                }
+            }
+        }
+        gridBarPage = 1;
+        setToast("Loop: 2 Bars (32 steps)", 90);
+    } else {
+        currentLoop.numBars = 1;
+        gridBarPage = 0;
+        setToast("Loop: 1 Bar (16 steps)", 90);
+    }
+    syncAudioLoop();
+}
+
+void AppState::cycleSwing() {
+    if (currentLoop.swingPercent < 54) {
+        currentLoop.swingPercent = 58;
+        setToast("Swing: 58% (Tavern Bounce)", 80);
+    } else if (currentLoop.swingPercent < 62) {
+        currentLoop.swingPercent = 64;
+        setToast("Swing: 64% (Shuffle)", 80);
+    } else {
+        currentLoop.swingPercent = 50;
+        setToast("Swing: 50% (Straight)", 80);
+    }
+    syncAudioLoop();
+}
+
 void AppState::saveCurrentLoop() {
     if (storageSaveLoop(currentLoop)) {
         refreshSavedLoops();
@@ -192,6 +243,7 @@ void AppState::loadLoopById(uint16_t loopId) {
     if (storageLoadLoop(loopId, loaded)) {
         currentLoop = loaded;
         hasUndo = false;
+        gridBarPage = 0;
         syncAudioLoop();
         if (activeView != VIEW_SONG) {
             loadActiveVocalForCurrentMode();
@@ -199,6 +251,46 @@ void AppState::loadLoopById(uint16_t loopId) {
         char buf[64];
         std::snprintf(buf, sizeof(buf), "Loaded: %s", currentLoop.name);
         setToast(buf, 90);
+    }
+}
+
+void AppState::cueLoopFromSpellbook(uint16_t loopId) {
+    LoopFile loaded;
+    if (!storageLoadLoop(loopId, loaded)) return;
+
+    if (spellbookQuantizedCue && isPlaying) {
+        currentLoop = loaded;
+        hasUndo = false;
+        gridBarPage = 0;
+        audioEngineQueueNextBarLoop(loaded);
+        loadActiveVocalForCurrentMode();
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "Queued next bar: %s", currentLoop.name);
+        setToast(buf, 90);
+    } else {
+        currentLoop = loaded;
+        hasUndo = false;
+        gridBarPage = 0;
+        syncAudioLoop();
+        loadActiveVocalForCurrentMode();
+        if (!isPlaying) {
+            isPlaying = true;
+            audioEngineResetPlayhead();
+            audioEngineSetPlaying(true);
+        }
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "Playing: %s", currentLoop.name);
+        setToast(buf, 90);
+    }
+}
+
+void AppState::exportCurrentLoopWav() {
+    setToast("Rendering .WAV to SD...", 60);
+    char path[256];
+    if (storageExportLoopWav(currentLoop, activeVocalSamples, path, sizeof(path))) {
+        setToast("Exported .wav to exports/", 120);
+    } else {
+        setToast("WAV Export Failed!", 120);
     }
 }
 
@@ -243,12 +335,55 @@ void AppState::renameCurrentSong() {
     }
 }
 
+void AppState::createNewSong() {
+    uint16_t newId = storageGetNextSongId();
+    char newName[32];
+    std::snprintf(newName, sizeof(newName), "Bard Song %u", newId);
+    initEmptySong(currentSong, newId, newName, 112);
+    // Start with the current active loop as slot 1
+    storageSaveLoop(currentLoop);
+    refreshSavedLoops();
+    currentSong.numEntries = 1;
+    currentSong.chain[0] = { currentLoop.loopId, 2, SEC_INTRO, 0, {0, 0, 0} };
+    selectedSongSlot = 0;
+    showSongShelf = false;
+    saveCurrentSong();
+    loadActiveVocalForCurrentMode();
+}
+
+void AppState::loadSongById(uint16_t songId) {
+    SongFile loaded;
+    if (storageLoadSong(songId, loaded)) {
+        currentSong = loaded;
+        selectedSongSlot = 0;
+        showSongShelf = false;
+        syncSongToAudio();
+        audioEngineResetPlayhead();
+        loadActiveVocalForCurrentMode();
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "Loaded Song: %s", currentSong.name);
+        setToast(buf, 90);
+    }
+}
+
+void AppState::deleteSongById(uint16_t songId) {
+    if (savedSongs.size() <= 1) {
+        setToast("Keep at least 1 song", 90);
+        return;
+    }
+    storageDeleteSong(songId);
+    refreshSavedSongs();
+    if (!savedSongs.empty()) {
+        loadSongById(savedSongs[0].songId);
+    }
+    setToast("Deleted song", 90);
+}
+
 void AppState::addCurrentLoopToSong() {
     if (currentSong.numEntries >= BB_MAX_SONG_CLIPS) {
         setToast("Song full (32 clips max)", 90);
         return;
     }
-    // Ensure current loop is persisted before referencing it
     storageSaveLoop(currentLoop);
     refreshSavedLoops();
 
@@ -285,7 +420,6 @@ void AppState::copyAndTweakSongSlot(int slotIdx) {
     storageSaveLoop(src);
     refreshSavedLoops();
 
-    // Insert right after slotIdx
     int insertPos = slotIdx + 1;
     for (int i = currentSong.numEntries; i > insertPos; --i) {
         currentSong.chain[i] = currentSong.chain[i - 1];
@@ -296,7 +430,6 @@ void AppState::copyAndTweakSongSlot(int slotIdx) {
     selectedSongSlot = insertPos;
     saveCurrentSong();
 
-    // Immediately drill down to tweak the new clip
     editSongSlotLoop(insertPos);
 }
 
@@ -311,8 +444,9 @@ void AppState::editSongSlotLoop(int slotIdx) {
         return;
     }
     currentLoop = loaded;
-    currentLoop.bpm = currentSong.bpm; // Edit at song's master tempo
+    currentLoop.bpm = currentSong.bpm;
     hasUndo = false;
+    gridBarPage = 0;
     editingFromSong = true;
     returnSongSlot = slotIdx;
 
@@ -323,7 +457,7 @@ void AppState::editSongSlotLoop(int slotIdx) {
     loadActiveVocalForCurrentMode();
 
     char buf[64];
-    std::snprintf(buf, sizeof(buf), "Editing: %s (Tap BACK TO SONG)", currentLoop.name);
+    std::snprintf(buf, sizeof(buf), "Editing: %s (Tap < SONG)", currentLoop.name);
     setToast(buf, 120);
 }
 
@@ -360,6 +494,16 @@ void AppState::deleteSongSlot(int slotIdx) {
     saveCurrentSong();
 }
 
+void AppState::exportCurrentSongWav() {
+    setToast("Rendering Song .WAV to SD...", 60);
+    char path[256];
+    if (storageExportSongWav(currentSong, activeVocalSamples, path, sizeof(path))) {
+        setToast("Exported Song .wav to exports/", 120);
+    } else {
+        setToast("Song WAV Export Failed!", 120);
+    }
+}
+
 int AppState::getTotalSongBars() const {
     int total = 0;
     for (int i = 0; i < currentSong.numEntries; ++i) {
@@ -375,7 +519,7 @@ const char* AppState::getLoopNameById(uint16_t loopId) const {
     return "Loop";
 }
 
-// ---- Vocal Layer Operations ----
+// ---- Vocal Layer & Mix Operations ----
 
 void AppState::loadActiveVocalForCurrentMode() {
     bool isSong = (activeView == VIEW_SONG);
@@ -383,6 +527,7 @@ void AppState::loadActiveVocalForCurrentMode() {
     bool hasVoc = false;
     uint8_t vol = 95;
     bool muted = false;
+    bool hpf = (currentLoop.vocalHighPass != 0);
 
     if (isSong) {
         storageGetSongVocalPath(currentSong.songId, path, sizeof(path));
@@ -401,8 +546,7 @@ void AppState::loadActiveVocalForCurrentMode() {
         micComputeWaveformBars(activeVocalSamples, vocalWaveBars, BB_WAVE_BARS);
         audioEngineSetVocalLayer(activeVocalSamples.data(),
                                  static_cast<uint32_t>(activeVocalSamples.size()),
-                                 !isSong, // Loop vocal loops per bar; song vocal plays start-to-finish
-                                 vol, muted);
+                                 !isSong, vol, muted, hpf);
     } else {
         std::memset(vocalWaveBars, 0, sizeof(vocalWaveBars));
         audioEngineClearVocalLayer();
@@ -415,21 +559,18 @@ void AppState::startVocalRecording(bool songScope) {
         return;
     }
 
-    // Save current active vocal into shadow undo buffer so bad takes never ruin anything
     undoVocalSamples = activeVocalSamples;
     undoVocalIsSong = songScope;
     undoVocalTargetId = songScope ? currentSong.songId : currentLoop.loopId;
     hasVocalUndo = true;
 
-    // Mute existing vocal during retake while keeping instrumental backing playing
     audioEngineClearVocalLayer();
 
     uint16_t bpm = songScope ? currentSong.bpm : currentLoop.bpm;
     if (bpm < 60 || bpm > 180) bpm = 110;
     double samplesPerBar = (static_cast<double>(BB_MIC_SAMPLE_RATE) * 60.0 * 4.0) / static_cast<double>(bpm);
-    uint32_t targetSamples = songScope
-        ? static_cast<uint32_t>(std::round(samplesPerBar * std::max(1, getTotalSongBars())))
-        : static_cast<uint32_t>(std::round(samplesPerBar));
+    int bars = songScope ? std::max(1, getTotalSongBars()) : (currentLoop.numBars == 2 ? 2 : 1);
+    uint32_t targetSamples = static_cast<uint32_t>(std::round(samplesPerBar * bars));
 
     if (!micRecorderStart(targetSamples)) {
         setToast("Mic start failed!", 110);
@@ -439,16 +580,15 @@ void AppState::startVocalRecording(bool songScope) {
 
     isRecordingVocal = true;
     vocalRecIsSongScope = songScope;
-    isRecording = false; // Don't write grid notes while singing
+    isRecording = false;
 
-    // Restart playback from bar 1 so vocals align cleanly
     audioEngineSetSongMode(songScope);
     audioEngineResetPlayhead();
     isPlaying = true;
     audioEngineSetPlaying(true);
 
     setToast(songScope ? "SINGING (SONG): Tap REC/STOP to finish"
-                       : "SINGING (1-BAR CLIP): Auto-stops at bar end", 120);
+                       : "SINGING (CLIP): Auto-stops at loop end", 120);
 }
 
 void AppState::stopVocalRecording(bool commit) {
@@ -487,8 +627,7 @@ void AppState::stopVocalRecording(bool commit) {
 
 void AppState::pollVocalRecording() {
     if (!isRecordingVocal) return;
-    bool reachedTarget = micRecorderPoll();
-    if (reachedTarget) {
+    if (micRecorderPoll()) {
         stopVocalRecording(true);
     }
 }
@@ -565,6 +704,27 @@ void AppState::toggleVocalMute(bool songScope) {
     }
 }
 
+void AppState::toggleVocalHighPass() {
+    currentLoop.vocalHighPass ^= 1;
+    loadActiveVocalForCurrentMode();
+    setToast(currentLoop.vocalHighPass ? "Vocal HPF: ON (Clear)" : "Vocal HPF: OFF (Warm)", 80);
+}
+
+void AppState::toggleWifiMidi() {
+    if (wifiMidiEnabled) {
+        wifiMidiExit();
+        wifiMidiEnabled = false;
+        setToast("Wi-Fi MIDI: OFF", 80);
+    } else {
+        if (wifiMidiInit()) {
+            wifiMidiEnabled = true;
+            setToast("Wi-Fi MIDI: ON (UDP 5004)", 100);
+        } else {
+            setToast("Wi-Fi MIDI failed (Check Wi-Fi)", 110);
+        }
+    }
+}
+
 void AppState::playLiveDegree(int degree, uint8_t velocity) {
     if (degree < 0 || degree >= BB_GRID_ROWS) return;
 
@@ -575,14 +735,20 @@ void AppState::playLiveDegree(int degree, uint8_t velocity) {
     uint8_t instId = currentLoop.tracks[activeTrack].instrumentId;
 
     audioEngineTriggerLiveNote(activeTrack, instId, note, velocity);
+    if (wifiMidiEnabled) {
+        uint8_t ch = (activeTrack == TRACK_DRUMS) ? 9 : static_cast<uint8_t>(activeTrack);
+        wifiMidiSendNoteOn(ch, note, velocity);
+    }
+
     lastLiveNote = note;
     lastLiveDegree = degree;
     liveFlashFrames = 14;
 
     if (isRecording && isPlaying && activeView != VIEW_SONG) {
+        int totalSteps = (currentLoop.numBars == 2) ? BB_MAX_STEPS : BB_STEPS_PER_LOOP;
         int step = audioEngineGetCurrentStep();
         float frac = audioEngineGetStepFraction();
-        int qStep = (frac >= 0.55f) ? ((step + 1) % BB_STEPS_PER_LOOP) : step;
+        int qStep = (frac >= 0.55f) ? ((step + 1) % totalSteps) : step;
         int8_t bendQ4 = static_cast<int8_t>(std::lround(circleBendSemis * 16.0f));
         if (bendQ4 > 32) bendQ4 = 32;
         if (bendQ4 < -32) bendQ4 = -32;
@@ -593,6 +759,10 @@ void AppState::playLiveDegree(int degree, uint8_t velocity) {
 
 void AppState::releaseLiveNotes() {
     audioEngineReleaseLiveNotes(activeTrack);
+    if (wifiMidiEnabled && lastLiveNote > 0) {
+        uint8_t ch = (activeTrack == TRACK_DRUMS) ? 9 : static_cast<uint8_t>(activeTrack);
+        wifiMidiSendNoteOff(ch, lastLiveNote);
+    }
 }
 
 void AppState::handleHardwareInput(u32 kDown, u32 kHeld, u32 kUp, const circlePosition& cpad) {
@@ -601,7 +771,6 @@ void AppState::handleHardwareInput(u32 kDown, u32 kHeld, u32 kUp, const circlePo
 
     pollVocalRecording();
 
-    // Global transport & navigation shortcuts
     if (kDown & KEY_START) {
         togglePlay();
     }
@@ -609,7 +778,6 @@ void AppState::handleHardwareInput(u32 kDown, u32 kHeld, u32 kUp, const circlePo
         switchView((activeView == VIEW_SPELLBOOK) ? VIEW_GRID : VIEW_SPELLBOOK);
     }
 
-    // Octave shift on L / R
     if (kDown & KEY_L) {
         if (octaveOffset > -1) {
             octaveOffset--;
@@ -623,7 +791,6 @@ void AppState::handleHardwareInput(u32 kDown, u32 kHeld, u32 kUp, const circlePo
         }
     }
 
-    // Circle Pad Pitch Bend (+/- 2 semitones on X) & Vibrato (on Y)
     constexpr int DEADZONE = 20;
     float nx = 0.0f;
     if (cpad.dx > DEADZONE)       nx = static_cast<float>(cpad.dx - DEADZONE) / 136.0f;
@@ -638,8 +805,11 @@ void AppState::handleHardwareInput(u32 kDown, u32 kHeld, u32 kUp, const circlePo
     circleVibrato = ny;
 
     audioEngineSetCirclePad(circleBendSemis, circleVibrato);
+    if (wifiMidiEnabled && (std::fabs(circleBendSemis) > 0.02f)) {
+        uint8_t ch = (activeTrack == TRACK_DRUMS) ? 9 : static_cast<uint8_t>(activeTrack);
+        wifiMidiSendPitchBend(ch, circleBendSemis);
+    }
 
-    // Physical 8-note live play buttons (Ocarina-style A/B/X/Y + D-Pad)
     static const u32 NOTE_KEYS[8] = {
         KEY_DDOWN, KEY_DRIGHT, KEY_DUP, KEY_DLEFT,
         KEY_B, KEY_A, KEY_Y, KEY_X

@@ -41,6 +41,11 @@ LDFLAGS	=	-specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
 LIBS	:= -lcitro2d -lcitro3d -lctru -lm
 
+ifneq ($(wildcard $(DEVKITPRO)/portlibs/3ds/lib/libopendsp.a),)
+	CFLAGS += -DBB_USE_OPENDSP
+	LIBS   := -lopendsp $(LIBS)
+endif
+
 #---------------------------------------------------------------------------------
 ifeq ($(strip $(CTRU)),)
 export CTRU := $(DEVKITPRO)/libctru

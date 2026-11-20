@@ -17,10 +17,12 @@ void viewSpellbookDrawTop(const AppState& state) {
     uiDrawTopHeader(state);
     uiDrawTopFourTrackOverview(state, 40.0f, 148.0f);
 
-    char info[64];
-    std::snprintf(info, sizeof(info), "Spellbook: %zu saved loops | Tap any loop to play on cue!",
-                  state.savedLoops.size());
-    uiDrawText(10.0f, 198.0f, 0.42f, 0.42f, Colors::GOLD_TEXT, info);
+    char info[80];
+    std::snprintf(info, sizeof(info), "Spellbook: %zu loops | Cue: %s%s",
+                  state.savedLoops.size(),
+                  state.spellbookQuantizedCue ? "Next Bar" : "Instant",
+                  audioEngineHasQueuedLoop() ? " (QUEUED)" : "");
+    uiDrawText(10.0f, 198.0f, 0.40f, 0.40f, Colors::GOLD_TEXT, info);
 }
 
 void viewSpellbookDrawBottom(const AppState& state) {
@@ -43,28 +45,38 @@ void viewSpellbookDrawBottom(const AppState& state) {
             uiDrawButton(r, bg, border, Colors::CREAM_TEXT, nullptr);
 
             uiDrawText(r.x + 8.0f, r.y + 6.0f, 0.42f, 0.42f, Colors::GOLD_TEXT, item.name);
-            char sub[32];
-            std::snprintf(sub, sizeof(sub), "%u BPM | %s", item.bpm, getScaleName(item.scaleId));
-            uiDrawText(r.x + 8.0f, r.y + 24.0f, 0.35f, 0.35f, Colors::CREAM_TEXT, sub);
+            char sub[36];
+            std::snprintf(sub, sizeof(sub), "%u BPM | %s%s",
+                          item.bpm, getScaleName(item.scaleId),
+                          item.numBars == 2 ? " 2B" : "");
+            uiDrawText(r.x + 8.0f, r.y + 24.0f, 0.34f, 0.34f, Colors::CREAM_TEXT, sub);
         } else {
             uiDrawButton(r, Colors::BG_DARK, Colors::BG_PANEL, Colors::MUTED_TEXT, "(Empty)", 0.36f);
         }
     }
 
     // Bottom Action Row (y: 173..201)
-    Rect btnRename = {  4.0f, 173.0f, 64.0f, 28.0f };
-    Rect btnCopy   = { 71.0f, 173.0f, 54.0f, 28.0f };
-    Rect btnMidi   = {128.0f, 173.0f, 64.0f, 28.0f };
-    Rect btnDel    = {195.0f, 173.0f, 48.0f, 28.0f };
-    Rect btnPrev   = {246.0f, 173.0f, 34.0f, 28.0f };
-    Rect btnNext   = {283.0f, 173.0f, 33.0f, 28.0f };
+    Rect btnRename = {  4.0f, 173.0f, 48.0f, 28.0f };
+    Rect btnCopy   = { 54.0f, 173.0f, 38.0f, 28.0f };
+    Rect btnCue    = { 94.0f, 173.0f, 52.0f, 28.0f };
+    Rect btnMidi   = {148.0f, 173.0f, 44.0f, 28.0f };
+    Rect btnWav    = {194.0f, 173.0f, 46.0f, 28.0f };
+    Rect btnDel    = {242.0f, 173.0f, 28.0f, 28.0f };
+    Rect btnPrev   = {272.0f, 173.0f, 22.0f, 28.0f };
+    Rect btnNext   = {296.0f, 173.0f, 21.0f, 28.0f };
 
-    uiDrawButton(btnRename, Colors::BG_CARD_ALT, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "RENAME", 0.35f);
-    uiDrawButton(btnCopy,   Colors::BG_CARD_ALT, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "COPY", 0.35f);
-    uiDrawButton(btnMidi,   Colors::BLUE_ACTION, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "EXP.MID", 0.34f);
-    uiDrawButton(btnDel,    Colors::BG_CARD,     Colors::RED_REC,     Colors::RED_REC,    "DEL", 0.35f);
-    uiDrawButton(btnPrev,   Colors::BG_CARD,     Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "<", 0.42f);
-    uiDrawButton(btnNext,   Colors::BG_CARD,     Colors::BORDER_WOOD, Colors::GOLD_TEXT,  ">", 0.42f);
+    uiDrawButton(btnRename, Colors::BG_CARD_ALT, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "NAME", 0.32f);
+    uiDrawButton(btnCopy,   Colors::BG_CARD_ALT, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "COPY", 0.32f);
+    uiDrawButton(btnCue,
+                 state.spellbookQuantizedCue ? Colors::AMBER_JAM : Colors::PURPLE_SPELL,
+                 Colors::BORDER_WOOD,
+                 state.spellbookQuantizedCue ? Colors::BG_DARK : Colors::CREAM_TEXT,
+                 state.spellbookQuantizedCue ? "Q:BAR" : "Q:NOW", 0.32f);
+    uiDrawButton(btnMidi,   Colors::BLUE_ACTION, Colors::BORDER_WOOD, Colors::CREAM_TEXT, ".MID", 0.32f);
+    uiDrawButton(btnWav,    Colors::GREEN_PLAY,  Colors::BORDER_WOOD, Colors::CREAM_TEXT, ".WAV", 0.32f);
+    uiDrawButton(btnDel,    Colors::BG_CARD,     Colors::RED_REC,     Colors::RED_REC,    "DEL", 0.30f);
+    uiDrawButton(btnPrev,   Colors::BG_CARD,     Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "<", 0.38f);
+    uiDrawButton(btnNext,   Colors::BG_CARD,     Colors::BORDER_WOOD, Colors::GOLD_TEXT,  ">", 0.38f);
 }
 
 void viewSpellbookHandleTouch(AppState& state, float tx, float ty, bool isJustPressed) {
@@ -74,32 +86,30 @@ void viewSpellbookHandleTouch(AppState& state, float tx, float ty, bool isJustPr
     int totalPages = (total + CARDS_PER_PAGE - 1) / CARDS_PER_PAGE;
     if (totalPages < 1) totalPages = 1;
 
-    // Loop Cue Cards
     for (int i = 0; i < CARDS_PER_PAGE; ++i) {
         int idx = state.spellbookPage * CARDS_PER_PAGE + i;
         if (idx < total && getCardRect(i).contains(tx, ty)) {
-            state.loadLoopById(state.savedLoops[idx].loopId);
-            if (!state.isPlaying) {
-                state.isPlaying = true;
-                audioEngineResetPlayhead();
-                audioEngineSetPlaying(true);
-            }
+            state.cueLoopFromSpellbook(state.savedLoops[idx].loopId);
             return;
         }
     }
 
-    // Action Buttons
-    Rect btnRename = {  4.0f, 173.0f, 64.0f, 28.0f };
-    Rect btnCopy   = { 71.0f, 173.0f, 54.0f, 28.0f };
-    Rect btnMidi   = {128.0f, 173.0f, 64.0f, 28.0f };
-    Rect btnDel    = {195.0f, 173.0f, 48.0f, 28.0f };
-    Rect btnPrev   = {246.0f, 173.0f, 34.0f, 28.0f };
-    Rect btnNext   = {283.0f, 173.0f, 33.0f, 28.0f };
+    Rect btnRename = {  4.0f, 173.0f, 48.0f, 28.0f };
+    Rect btnCopy   = { 54.0f, 173.0f, 38.0f, 28.0f };
+    Rect btnCue    = { 94.0f, 173.0f, 52.0f, 28.0f };
+    Rect btnMidi   = {148.0f, 173.0f, 44.0f, 28.0f };
+    Rect btnWav    = {194.0f, 173.0f, 46.0f, 28.0f };
+    Rect btnDel    = {242.0f, 173.0f, 28.0f, 28.0f };
+    Rect btnPrev   = {272.0f, 173.0f, 22.0f, 28.0f };
+    Rect btnNext   = {296.0f, 173.0f, 21.0f, 28.0f };
 
     if (btnRename.contains(tx, ty)) {
         state.renameCurrentLoop();
     } else if (btnCopy.contains(tx, ty)) {
         state.copyCurrentLoop();
+    } else if (btnCue.contains(tx, ty)) {
+        state.spellbookQuantizedCue = !state.spellbookQuantizedCue;
+        state.setToast(state.spellbookQuantizedCue ? "Cue: Switches on Next Bar" : "Cue: Instant Trigger", 80);
     } else if (btnMidi.contains(tx, ty)) {
         char path[256];
         if (storageExportLoopMidi(state.currentLoop, path, sizeof(path))) {
@@ -107,6 +117,8 @@ void viewSpellbookHandleTouch(AppState& state, float tx, float ty, bool isJustPr
         } else {
             state.setToast("MIDI Export Failed!", 110);
         }
+    } else if (btnWav.contains(tx, ty)) {
+        state.exportCurrentLoopWav();
     } else if (btnDel.contains(tx, ty)) {
         if (state.savedLoops.size() > 1) {
             storageDeleteLoop(state.currentLoop.loopId);

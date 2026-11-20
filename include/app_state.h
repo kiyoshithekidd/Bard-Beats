@@ -24,14 +24,20 @@ struct AppState {
     TrackData undoSnapshot;
     int      undoTrackIdx = 0;
     bool     hasUndo = false;
+    int      gridBarPage = 0; // 0 = steps 1..16, 1 = steps 17..32
 
     // Active Song & Drill-Down Context
     SongFile currentSong;
     std::vector<SongSummary> savedSongs;
     int      selectedSongSlot = 0;
-    int      songScrollOffset = 0;
+    int      songShelfPage = 0;
+    bool     showSongShelf = false;
     bool     editingFromSong = false;
     int      returnSongSlot = 0;
+
+    // Mix Overlay Drawer (#4) & Wi-Fi MIDI (#6)
+    bool     showMixDrawer = false;
+    bool     wifiMidiEnabled = false;
 
     // Vocal Layer & Non-Destructive Retake Shadow Buffer
     std::vector<int16_t> activeVocalSamples;
@@ -58,10 +64,10 @@ struct AppState {
     int      lastLiveDegree = -1;
     int      liveFlashFrames = 0;
 
-    // Spellbook saved loops cache
+    // Spellbook saved loops cache & Quantized Cue (#5)
     std::vector<LoopSummary> savedLoops;
     int      spellbookPage = 0;
-    int      selectedSavedIdx = -1;
+    bool     spellbookQuantizedCue = false; // false = Instant, true = Next Bar
 
     // Status toast banner
     char     toastMsg[64] = {0};
@@ -84,21 +90,29 @@ struct AppState {
     void copyCurrentLoop();
     void renameCurrentLoop();
     void loadLoopById(uint16_t loopId);
+    void cueLoopFromSpellbook(uint16_t loopId);
     void syncAudioLoop();
+    void toggleLoopBars();
+    void cycleSwing();
+    void exportCurrentLoopWav();
 
     // Song operations
     void syncSongToAudio();
     void saveCurrentSong();
     void renameCurrentSong();
+    void createNewSong();
+    void loadSongById(uint16_t songId);
+    void deleteSongById(uint16_t songId);
     void addCurrentLoopToSong();
     void copyAndTweakSongSlot(int slotIdx);
     void editSongSlotLoop(int slotIdx);
     void returnToSongFromEdit();
     void deleteSongSlot(int slotIdx);
+    void exportCurrentSongWav();
     int  getTotalSongBars() const;
     const char* getLoopNameById(uint16_t loopId) const;
 
-    // Vocal Layer operations (per-clip and whole-song)
+    // Vocal & Mix operations
     void loadActiveVocalForCurrentMode();
     void startVocalRecording(bool songScope);
     void stopVocalRecording(bool commit);
@@ -106,12 +120,14 @@ struct AppState {
     void undoVocalTake();
     void clearVocalTake(bool songScope);
     void toggleVocalMute(bool songScope);
+    void toggleVocalHighPass();
+    void toggleWifiMidi();
 
-    // Live note input (from buttons, pads, or instrument touch)
+    // Live note input
     void playLiveDegree(int degree, uint8_t velocity = 100);
     void releaseLiveNotes();
 
-    // Update hardware inputs (buttons, circle pad)
+    // Hardware input
     void handleHardwareInput(u32 kDown, u32 kHeld, u32 kUp, const circlePosition& cpad);
 };
 

@@ -1,5 +1,7 @@
 #include "storage_sd.h"
+#include "synth_voices.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <dirent.h>
@@ -38,6 +40,20 @@ static void sanitizeName(const char* in, char* out, int maxLen) {
     }
 }
 
+static bool hasLoopId(const std::vector<LoopSummary>& list, uint16_t id) {
+    for (const auto& s : list) {
+        if (s.loopId == id) return true;
+    }
+    return false;
+}
+
+static bool hasSongId(const std::vector<SongSummary>& list, uint16_t id) {
+    for (const auto& s : list) {
+        if (s.songId == id) return true;
+    }
+    return false;
+}
+
 bool storageInit() {
     ensureDir("sdmc:/3ds");
     ensureDir(ROOT_DIR);
@@ -46,22 +62,73 @@ bool storageInit() {
     ensureDir(VOCALS_DIR);
     ensureDir(EXPORTS_DIR);
 
-    auto existing = storageListLoops();
-    if (existing.empty()) {
-        for (int i = 0; i < 4; ++i) {
+    auto existingLoops = storageListLoops();
+    if (existingLoops.empty()) {
+        for (int i = 0; i < BB_NUM_STARTER_LOOPS; ++i) {
             LoopFile starter;
             initStarterLoop(starter, i);
             storageSaveLoop(starter);
+        }
+    } else {
+        // Seed newly added starter spells (IDs 5..8) if upgrading from v0.1.x
+        for (int i = 4; i < BB_NUM_STARTER_LOOPS; ++i) {
+            LoopFile starter;
+            initStarterLoop(starter, i);
+            if (!hasLoopId(existingLoops, starter.loopId)) {
+                storageSaveLoop(starter);
+            }
         }
     }
 
     auto existingSongs = storageListSongs();
     if (existingSongs.empty()) {
-        SongFile starterSong;
-        initStarterSong(starterSong);
-        storageSaveSong(starterSong);
+        for (int i = 0; i < BB_NUM_STARTER_SONGS; ++i) {
+            SongFile starterSong;
+            initStarterSong(starterSong, i);
+            storageSaveSong(starterSong);
+        }
+    } else {
+        for (int i = 1; i < BB_NUM_STARTER_SONGS; ++i) {
+            SongFile starterSong;
+            initStarterSong(starterSong, i);
+            if (!hasSongId(existingSongs, starterSong.songId)) {
+                storageSaveSong(starterSong);
+            }
+        }
     }
     return true;
+}
+
+static bool readLoopFileAutoMigrate(const char* path, LoopFile& outLoop) {
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return false;
+    std::fseek(f, 0, SEEK_END);
+    long sz = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+
+    if (sz == static_cast<long>(sizeof(LoopFile))) {
+        size_t rd = std::fread(&outLoop, 1, sizeof(LoopFile), f);
+        std::fclose(f);
+        if (rd == sizeof(LoopFile) && std::memcmp(outLoop.magic, "BBLP", 4) == 0) {
+            if (outLoop.numBars < 1 || outLoop.numBars > 2) outLoop.numBars = 1;
+            if (outLoop.swingPercent < 50 || outLoop.swingPercent > 66) outLoop.swingPercent = 50;
+            if (outLoop.reverbMix > 100) outLoop.reverbMix = 38;
+            return true;
+        }
+        return false;
+    } else if (sz == static_cast<long>(sizeof(LoopFileV1))) {
+        LoopFileV1 v1{};
+        size_t rd = std::fread(&v1, 1, sizeof(LoopFileV1), f);
+        std::fclose(f);
+        if (rd == sizeof(LoopFileV1) && std::memcmp(v1.magic, "BBLP", 4) == 0) {
+            migrateLoopV1ToV2(v1, outLoop);
+            return true;
+        }
+        return false;
+    }
+
+    std::fclose(f);
+    return false;
 }
 
 std::vector<LoopSummary> storageListLoops() {
@@ -76,18 +143,14 @@ std::vector<LoopSummary> storageListLoops() {
 
         char fullPath[512];
         std::snprintf(fullPath, sizeof(fullPath), "%s/%s", LOOPS_DIR, ent->d_name);
-        FILE* f = std::fopen(fullPath, "rb");
-        if (!f) continue;
-
         LoopFile hdr;
-        size_t rd = std::fread(&hdr, 1, sizeof(LoopFile), f);
-        std::fclose(f);
-        if (rd == sizeof(LoopFile) && std::memcmp(hdr.magic, "BBLP", 4) == 0) {
+        if (readLoopFileAutoMigrate(fullPath, hdr)) {
             LoopSummary s{};
             s.loopId = hdr.loopId;
             s.bpm = hdr.bpm;
             s.scaleId = hdr.scaleId;
             s.hasVocal = hdr.hasVocalClip;
+            s.numBars = hdr.numBars;
             std::snprintf(s.name, sizeof(s.name), "%s", hdr.name);
             std::snprintf(s.filename, sizeof(s.filename), "%s", ent->d_name);
             list.push_back(s);
@@ -152,11 +215,7 @@ bool storageLoadLoop(uint16_t loopId, LoopFile& outLoop) {
         if (s.loopId == loopId) {
             char path[512];
             std::snprintf(path, sizeof(path), "%s/%s", LOOPS_DIR, s.filename);
-            FILE* f = std::fopen(path, "rb");
-            if (!f) return false;
-            size_t rd = std::fread(&outLoop, 1, sizeof(LoopFile), f);
-            std::fclose(f);
-            return rd == sizeof(LoopFile) && std::memcmp(outLoop.magic, "BBLP", 4) == 0;
+            return readLoopFileAutoMigrate(path, outLoop);
         }
     }
     return false;
@@ -198,14 +257,12 @@ bool storageExportLoopMidi(const LoopFile& loop, char* outPathBuf, int outPathBu
     std::snprintf(path, sizeof(path), "%s/%03u_%s.mid", EXPORTS_DIR, loop.loopId, cleanName);
 
     std::vector<uint8_t> out;
-    // MThd header: Format 1, 5 tracks (1 tempo + 4 instrument tracks), 480 PPQN
     out.insert(out.end(), {'M', 'T', 'h', 'd'});
     writeBE32(out, 6);
     writeBE16(out, 1);
     writeBE16(out, 1 + BB_NUM_TRACKS);
     writeBE16(out, 480);
 
-    // Tempo track
     std::vector<uint8_t> tempoTrk;
     uint32_t usPerQuarter = 60000000u / (loop.bpm > 0 ? loop.bpm : 110);
     writeVarLen(tempoTrk, 0);
@@ -221,8 +278,8 @@ bool storageExportLoopMidi(const LoopFile& loop, char* outPathBuf, int outPathBu
     writeBE32(out, static_cast<uint32_t>(tempoTrk.size()));
     out.insert(out.end(), tempoTrk.begin(), tempoTrk.end());
 
-    // 4 Instrumental tracks (120 ticks per 16th note at 480 PPQN)
     constexpr uint32_t TICKS_PER_STEP = 120;
+    int totalSteps = (loop.numBars == 2) ? BB_MAX_STEPS : BB_STEPS_PER_LOOP;
     for (int t = 0; t < BB_NUM_TRACKS; ++t) {
         std::vector<uint8_t> trk;
         uint8_t ch = (t == TRACK_DRUMS) ? 9 : static_cast<uint8_t>(t);
@@ -230,7 +287,7 @@ bool storageExportLoopMidi(const LoopFile& loop, char* outPathBuf, int outPathBu
 
         struct MidiEv { uint32_t tick; uint8_t status; uint8_t d1; uint8_t d2; };
         std::vector<MidiEv> evs;
-        for (int s = 0; s < BB_STEPS_PER_LOOP; ++s) {
+        for (int s = 0; s < totalSteps; ++s) {
             const StepCell& cell = loop.tracks[t].steps[s];
             uint32_t onTick = static_cast<uint32_t>(s) * TICKS_PER_STEP;
             uint32_t offTick = onTick + (cell.gateLength > 0 ? cell.gateLength : 1) * TICKS_PER_STEP - 10;
@@ -374,7 +431,7 @@ bool storageDeleteSong(uint16_t songId) {
     return true;
 }
 
-// ---- Vocal WAV Persistence (16-bit mono RIFF WAV) ----
+// ---- Vocal WAV & Offline WAV Bounce ----
 
 void storageGetLoopVocalPath(uint16_t loopId, char* outPath, int outSize) {
     std::snprintf(outPath, outSize, "%s/loop_%03u_vocal.wav", VOCALS_DIR, loopId);
@@ -412,8 +469,8 @@ bool storageSaveVocalWav(const char* path, const int16_t* samples, uint32_t samp
     std::memcpy(hdr.wave, "WAVE", 4);
     std::memcpy(hdr.fmt,  "fmt ", 4);
     hdr.fmtSize       = 16;
-    hdr.audioFormat   = 1; // PCM
-    hdr.numChannels   = 1; // Mono
+    hdr.audioFormat   = 1;
+    hdr.numChannels   = 1;
     hdr.sampleRate    = sampleRate;
     hdr.bitsPerSample = 16;
     hdr.blockAlign    = 2;
@@ -453,7 +510,7 @@ bool storageLoadVocalWav(const char* path, std::vector<int16_t>& outSamples) {
     }
 
     uint32_t numSamples = hdr.dataSize / sizeof(int16_t);
-    if (numSamples == 0 || numSamples > 16365 * 180) { // cap at 3 min
+    if (numSamples == 0 || numSamples > 16365 * 180) {
         std::fclose(f);
         return false;
     }
@@ -470,6 +527,160 @@ bool storageLoadVocalWav(const char* path, std::vector<int16_t>& outSamples) {
 bool storageDeleteFile(const char* path) {
     if (!path) return false;
     return std::remove(path) == 0;
+}
+
+// Offline Stereo WAV Bounce (streams directly to SD in 1024-sample chunks)
+static bool bounceArrangementToWav(const char* path, uint16_t bpm,
+                                   const std::vector<LoopFile>& loops,
+                                   const std::vector<uint8_t>& repeats,
+                                   const std::vector<uint8_t>& muteMasks,
+                                   const std::vector<int16_t>& vocalSamples,
+                                   uint8_t vocalVol, bool vocalMuted, float reverbMix) {
+    if (loops.empty()) return false;
+    FILE* f = std::fopen(path, "wb");
+    if (!f) return false;
+
+    WavHeader hdr{};
+    std::memcpy(hdr.riff, "RIFF", 4);
+    std::memcpy(hdr.wave, "WAVE", 4);
+    std::memcpy(hdr.fmt,  "fmt ", 4);
+    hdr.fmtSize       = 16;
+    hdr.audioFormat   = 1;
+    hdr.numChannels   = 2;
+    hdr.sampleRate    = 32728;
+    hdr.bitsPerSample = 16;
+    hdr.blockAlign    = 4;
+    hdr.byteRate      = 32728 * 4;
+    std::memcpy(hdr.data, "data", 4);
+    std::fwrite(&hdr, 1, sizeof(WavHeader), f);
+
+    SynthVoices synth;
+    synth.init();
+
+    if (bpm < 60 || bpm > 180) bpm = 110;
+    double baseStepSamples = (static_cast<double>(BB_SAMPLE_RATE) * 60.0) / (static_cast<double>(bpm) * 4.0);
+    constexpr int CHUNK = 1024;
+    std::vector<int16_t> chunkBuf(CHUNK * 2);
+    uint32_t totalStereoFrames = 0;
+    uint32_t vocalPosQ1 = 0; // Fixed-point 1x -> 2x upsample index (16,364 Hz -> 32,728 Hz)
+    float vocGain = (!vocalMuted && !vocalSamples.empty()) ? (static_cast<float>(vocalVol) * 0.01f) : 0.0f;
+
+    for (size_t e = 0; e < loops.size(); ++e) {
+        const LoopFile& lp = loops[e];
+        uint8_t reps = (e < repeats.size() && repeats[e] > 0) ? repeats[e] : 1;
+        uint8_t mMask = (e < muteMasks.size()) ? muteMasks[e] : 0;
+        int numSteps = (lp.numBars == 2) ? BB_MAX_STEPS : BB_STEPS_PER_LOOP;
+        double swing = (lp.swingPercent >= 50 && lp.swingPercent <= 66) ? lp.swingPercent : 50.0;
+
+        uint8_t trackVols[BB_NUM_TRACKS];
+        uint8_t trackMuted[BB_NUM_TRACKS];
+        for (int t = 0; t < BB_NUM_TRACKS; ++t) {
+            trackVols[t] = lp.tracks[t].volume;
+            trackMuted[t] = (lp.tracks[t].muted || (mMask & (1u << t))) ? 1 : 0;
+        }
+
+        for (int r = 0; r < reps; ++r) {
+            for (int s = 0; s < numSteps; ++s) {
+                double stepMult = (s % 2 == 0) ? (swing / 50.0) : ((100.0 - swing) / 50.0);
+                int stepSamples = static_cast<int>(std::round(baseStepSamples * stepMult));
+
+                for (int t = 0; t < BB_NUM_TRACKS; ++t) {
+                    if (trackMuted[t]) continue;
+                    const StepCell& cell = lp.tracks[t].steps[s];
+                    if (cell.flags & 1) continue;
+                    uint8_t vel = cell.velocity > 0 ? cell.velocity : 95;
+                    float bendSemis = static_cast<float>(cell.pitchBendSemisQ4) / 16.0f;
+                    uint8_t instId = lp.tracks[t].instrumentId;
+                    double gateMult = (instId == INST_LUTE || instId == INST_HARP) ? 3.5
+                                    : (instId == INST_UPRIGHT_BASS ? 2.0 : 0.85);
+                    int gateSamples = static_cast<int>(baseStepSamples * (cell.gateLength > 0 ? cell.gateLength : 1) * gateMult);
+                    for (int p = 0; p < BB_MAX_POLY_PER_STEP; ++p) {
+                        if (cell.notes[p] != 0) {
+                            synth.triggerNote(t, instId, cell.notes[p], vel, bendSemis, gateSamples, false);
+                        }
+                    }
+                }
+
+                int rem = stepSamples;
+                while (rem > 0) {
+                    int n = (rem > CHUNK) ? CHUNK : rem;
+                    synth.render(chunkBuf.data(), n, 0.0f, 0.0f, trackVols, trackMuted, reverbMix);
+                    if (vocGain > 0.0f) {
+                        for (int i = 0; i < n; ++i) {
+                            uint32_t vIdx = vocalPosQ1 >> 1;
+                            if (vIdx < vocalSamples.size()) {
+                                int32_t vSmp = static_cast<int32_t>(vocalSamples[vIdx] * vocGain);
+                                int32_t l = std::max(-32767, std::min(32767, static_cast<int32_t>(chunkBuf[i * 2 + 0]) + vSmp));
+                                int32_t r2 = std::max(-32767, std::min(32767, static_cast<int32_t>(chunkBuf[i * 2 + 1]) + vSmp));
+                                chunkBuf[i * 2 + 0] = static_cast<int16_t>(l);
+                                chunkBuf[i * 2 + 1] = static_cast<int16_t>(r2);
+                                vocalPosQ1++;
+                            }
+                        }
+                    }
+                    std::fwrite(chunkBuf.data(), sizeof(int16_t), static_cast<size_t>(n) * 2, f);
+                    totalStereoFrames += static_cast<uint32_t>(n);
+                    rem -= n;
+                }
+            }
+        }
+    }
+
+    synth.shutdown();
+
+    hdr.dataSize = totalStereoFrames * 4;
+    hdr.chunkSize = 36 + hdr.dataSize;
+    std::fseek(f, 0, SEEK_SET);
+    std::fwrite(&hdr, 1, sizeof(WavHeader), f);
+    std::fclose(f);
+    return true;
+}
+
+bool storageExportLoopWav(const LoopFile& loop, const std::vector<int16_t>& vocalSamples,
+                          char* outPathBuf, int outPathBufSize) {
+    char cleanName[32];
+    sanitizeName(loop.name, cleanName, sizeof(cleanName));
+    char path[256];
+    std::snprintf(path, sizeof(path), "%s/%03u_%s.wav", EXPORTS_DIR, loop.loopId, cleanName);
+
+    std::vector<LoopFile> loops = { loop };
+    std::vector<uint8_t> reps   = { 2 }; // Export 2 passes so ring-out tail is captured
+    std::vector<uint8_t> masks  = { 0 };
+    bool ok = bounceArrangementToWav(path, loop.bpm, loops, reps, masks, vocalSamples,
+                                     loop.vocalVolume, loop.vocalMuted != 0,
+                                     static_cast<float>(loop.reverbMix) * 0.01f);
+    if (ok && outPathBuf && outPathBufSize > 0) {
+        std::snprintf(outPathBuf, outPathBufSize, "%s", path);
+    }
+    return ok;
+}
+
+bool storageExportSongWav(const SongFile& song, const std::vector<int16_t>& vocalSamples,
+                          char* outPathBuf, int outPathBufSize) {
+    if (song.numEntries == 0) return false;
+    char cleanName[32];
+    sanitizeName(song.name, cleanName, sizeof(cleanName));
+    char path[256];
+    std::snprintf(path, sizeof(path), "%s/song_%03u_%s.wav", EXPORTS_DIR, song.songId, cleanName);
+
+    std::vector<LoopFile> loops;
+    std::vector<uint8_t> reps;
+    std::vector<uint8_t> masks;
+    for (int i = 0; i < song.numEntries; ++i) {
+        LoopFile lf;
+        if (!storageLoadLoop(song.chain[i].loopId, lf)) {
+            initEmptyLoop(lf, song.chain[i].loopId, "Missing", song.bpm);
+        }
+        loops.push_back(lf);
+        reps.push_back(song.chain[i].repeatCount > 0 ? song.chain[i].repeatCount : 1);
+        masks.push_back(song.chain[i].muteMask);
+    }
+    bool ok = bounceArrangementToWav(path, song.bpm, loops, reps, masks, vocalSamples,
+                                     song.songVocalVolume, song.songVocalMuted != 0, 0.38f);
+    if (ok && outPathBuf && outPathBufSize > 0) {
+        std::snprintf(outPathBuf, outPathBufSize, "%s", path);
+    }
+    return ok;
 }
 
 } // namespace BardBeats
