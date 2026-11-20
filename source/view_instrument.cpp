@@ -53,7 +53,7 @@ void viewInstrumentDrawTop(const AppState& state) {
     C2D_SpriteSheet sheet = uiGetSpriteSheet();
     if (sheet) {
         size_t spriteIdx = sprites_lute_idx;
-        if (inst == INST_OCARINA || inst == INST_PULSE_LEAD || inst == INST_SUB_BASS) {
+        if (inst == INST_OCARINA || inst == INST_PULSE_LEAD) {
             spriteIdx = sprites_ocarina_idx;
         } else if (inst == INST_HARP) {
             spriteIdx = sprites_harp_idx;
@@ -80,7 +80,7 @@ void viewInstrumentDrawTop(const AppState& state) {
             C2D_DrawLine(x0, y0, glowCol, x1, y1, glowCol, 4.5f, 0.24f);
             C2D_DrawLine(x0, y0, coreCol, x1, y1, coreCol, 1.8f, 0.26f);
             C2D_DrawCircleSolid((x0 + x1) * 0.5f, (y0 + y1) * 0.5f, 0.27f, 6.0f + (1.0f - pulse) * 4.0f, glowCol);
-        } else if (inst == INST_OCARINA || inst == INST_PULSE_LEAD || inst == INST_SUB_BASS) {
+        } else if (inst == INST_OCARINA || inst == INST_PULSE_LEAD) {
             float hx = sx + OCARINA_HOLES[deg][0];
             float hy = STAGE_Y + OCARINA_HOLES[deg][1];
             C2D_DrawCircleSolid(hx, hy, 0.25f, 10.0f + (1.0f - pulse) * 5.0f, glowCol);
