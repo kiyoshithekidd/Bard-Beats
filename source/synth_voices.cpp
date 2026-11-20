@@ -190,7 +190,7 @@ void SynthVoices::triggerNote(int trackIdx, uint8_t instrumentId, uint8_t midiNo
     v.isLiveNote = isLive;
     v.envStage = ENV_ATTACK;
     v.envLevel = 0.0f;
-    v.gain = (static_cast<float>(velocity) / 127.0f) * 0.44f;
+    v.gain = (static_cast<float>(velocity) / 127.0f) * 0.78f;
     v.baseFreq = midiToFreq(midiNote);
     v.phaseInc = v.baseFreq / BB_SAMPLE_RATE;
     v.notePitchMult = (stepBendSemis != 0.0f) ? std::pow(2.0f, stepBendSemis / 12.0f) : 1.0f;
@@ -472,14 +472,14 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
         if (v.phase >= 1.0f) v.phase -= static_cast<float>(static_cast<int>(v.phase));
 
         float f1 = fastSin(v.phase);
-        float f2 = 0.22f * fastSin(v.phase * 2.0f);
-        float f3 = 0.05f * fastSin(v.phase * 3.0f);
+        float f2 = 0.28f * fastSin(v.phase * 2.0f);
+        float f3 = 0.10f * fastSin(v.phase * 3.0f);
 
         float n = nextWhiteNoise(v.rngState);
         v.lpfState  += 0.28f * (n - v.lpfState);
         v.lpfState2 += 0.09f * (v.lpfState - v.lpfState2);
         float breathAmt = 0.03f + ((v.ageSamples < 1800) ? (0.10f * (1.0f - static_cast<float>(v.ageSamples) * (1.0f / 1800.0f))) : 0.0f);
-        raw = (f1 + f2 + f3) * 0.78f + (v.lpfState - v.lpfState2) * breathAmt;
+        raw = (f1 + f2 + f3) * 1.05f + (v.lpfState - v.lpfState2) * breathAmt;
     } else if (v.instrumentId == INST_PULSE_LEAD) {
         float dt1 = v.phaseInc * pitchMult;
         float dt2 = dt1 * 1.0035f;
@@ -563,8 +563,9 @@ void SynthVoices::render(int16_t* outStereo, int numSamples, float liveBendSemis
         float wetL = 0.0f, wetR = 0.0f;
         reverb_.process(revIn, wetL, wetR);
 
-        float mixL = fastSoftClip(dryL + wetL * 0.38f);
-        float mixR = fastSoftClip(dryR + wetR * 0.38f);
+        constexpr float MASTER_GAIN = 1.45f;
+        float mixL = fastSoftClip((dryL + wetL * 0.38f) * MASTER_GAIN);
+        float mixR = fastSoftClip((dryR + wetR * 0.38f) * MASTER_GAIN);
 
         float absMax = std::max(std::fabs(mixL), std::fabs(mixR));
         if (absMax > peak) peak = absMax;
