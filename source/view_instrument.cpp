@@ -59,6 +59,8 @@ void viewInstrumentDrawTop(const AppState& state) {
             spriteIdx = sprites_harp_idx;
         } else if (inst == INST_TAVERN_KIT || inst == INST_CHIP_KIT) {
             spriteIdx = sprites_drums_idx;
+        } else if (inst == INST_UPRIGHT_BASS || inst == INST_SUB_BASS) {
+            spriteIdx = sprites_bass_idx;
         }
         C2D_Image img = C2D_SpriteSheetGetImage(sheet, spriteIdx);
         C2D_DrawImageAt(img, sx, STAGE_Y, 0.10f, nullptr, 1.0f, 1.0f);
@@ -101,6 +103,13 @@ void viewInstrumentDrawTop(const AppState& state) {
             C2D_DrawCircleSolid(dx, dy, 0.25f, rad + (1.0f - pulse) * 10.0f,
                                 C2D_Color32(0xFF, 0xE0, 0x66, static_cast<uint8_t>(pulse * 140.0f)));
             C2D_DrawCircleSolid(dx, dy, 0.27f, rad * 0.45f, glowCol);
+        } else if (inst == INST_UPRIGHT_BASS || inst == INST_SUB_BASS) {
+            // 4 thick horizontal bass strings aligned across fingerboard -> bridge on bass.png
+            int strIdx = deg / 2;
+            float sy = STAGE_Y + 71.0f + static_cast<float>(strIdx) * 4.3f;
+            C2D_DrawRectSolid(sx + 64.0f, sy - 1.5f, 0.24f, 228.0f, 3.8f, glowCol);
+            C2D_DrawRectSolid(sx + 64.0f, sy - 0.5f, 0.26f, 228.0f, 1.4f, coreCol);
+            C2D_DrawCircleSolid(sx + 245.0f, sy, 0.27f, 7.0f + (1.0f - pulse) * 4.0f, glowCol);
         } else {
             float sy = STAGE_Y + 64.0f + static_cast<float>(deg) * 3.4f;
             C2D_DrawRectSolid(sx + 80.0f, sy - 1.5f, 0.24f, 240.0f, 3.5f, glowCol);

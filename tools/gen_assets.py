@@ -15,7 +15,7 @@ import struct
 import wave
 
 SAMPLE_RATE_3DS = 32728.498
-BANNER_SR = 22050
+BANNER_SR = 44100
 
 
 def biquad_filter(samples: list[float], sr: float, mode: str, freq: float, q: float, gain_db: float = 0.0) -> list[float]:
@@ -195,13 +195,14 @@ def generate_banner_wav() -> None:
 
     peak = max(abs(x) for x in mix) or 1.0
     with wave.open("gfx/banner.wav", "wb") as wf:
-        wf.setnchannels(1)
+        wf.setnchannels(2)
         wf.setsampwidth(2)
         wf.setframerate(BANNER_SR)
         frames = bytearray()
         for s in mix:
             v = max(-1.0, min(1.0, (s / peak) * 0.72))
-            frames.extend(struct.pack("<h", int(round(v * 32767.0))))
+            pcm = int(round(v * 32767.0))
+            frames.extend(struct.pack("<hh", pcm, pcm))
         wf.writeframes(bytes(frames))
 
 
