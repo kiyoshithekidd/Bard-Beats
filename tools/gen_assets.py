@@ -158,27 +158,40 @@ def generate_audio_tables() -> None:
 
 def generate_banner_wav() -> None:
     os.makedirs("gfx", exist_ok=True)
-    # 1.9 second warm D-Dorian lute chord strum (D3, A3, D4, F4, A4)
+    # 1.4 second warm D-Dorian lute chord strum (D3, A3, D4, F4, A4)
+    # Padded to exact multiple of 14 samples (DSP-ADPCM frame size) with trailing silence
     notes = [
-        (146.83, 0.00),
-        (220.00, 0.06),
-        (293.66, 0.12),
-        (349.23, 0.18),
-        (440.00, 0.24),
+        (146.83, 0.03),
+        (220.00, 0.09),
+        (293.66, 0.15),
+        (349.23, 0.21),
+        (440.00, 0.27),
     ]
-    total_len = int(1.9 * BANNER_SR)
+    raw_len = int(1.40 * BANNER_SR)
+    total_len = ((raw_len + 13) // 14) * 14
+    active_len = total_len - int(0.08 * BANNER_SR)
     mix = [0.0] * total_len
     for idx, (freq, delay) in enumerate(notes):
         tone = synth_plucked_string(
-            freq_hz=freq, duration_sec=1.6, sr=BANNER_SR,
-            pick_pos=0.24, brightness=0.60, decay_sec=0.85,
+            freq_hz=freq, duration_sec=1.25, sr=BANNER_SR,
+            pick_pos=0.24, brightness=0.55, decay_sec=0.65,
             body_freq1=280.0, body_freq2=780.0, body_gain=4.0,
             seed=500 + idx
         )
         offset = int(delay * BANNER_SR)
         for i, val in enumerate(tone):
-            if offset + i < total_len:
-                mix[offset + i] += val * 0.34
+            if offset + i < active_len:
+                mix[offset + i] += val * 0.30
+
+    # Smooth 25ms fade-in and 120ms fade-out before trailing silence
+    fade_in = int(0.025 * BANNER_SR)
+    fade_out = int(0.120 * BANNER_SR)
+    for i in range(fade_in):
+        mix[i] *= (i / float(fade_in))
+    for i in range(fade_out):
+        idx = active_len - fade_out + i
+        if 0 <= idx < active_len:
+            mix[idx] *= (1.0 - (i / float(fade_out)))
 
     peak = max(abs(x) for x in mix) or 1.0
     with wave.open("gfx/banner.wav", "wb") as wf:
@@ -187,7 +200,7 @@ def generate_banner_wav() -> None:
         wf.setframerate(BANNER_SR)
         frames = bytearray()
         for s in mix:
-            v = max(-1.0, min(1.0, (s / peak) * 0.88))
+            v = max(-1.0, min(1.0, (s / peak) * 0.72))
             frames.extend(struct.pack("<h", int(round(v * 32767.0))))
         wf.writeframes(bytes(frames))
 
