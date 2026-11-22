@@ -70,6 +70,11 @@ static struct {
 
     double sampleAccum = 0.0;
     bool firstStepTriggered = false;
+
+    std::atomic<bool> metronomeEnabled{false};
+    float metroPhase = 0.0f;
+    float metroFreq = 1040.0f;
+    float metroEnv = 0.0f;
 } s_eng;
 
 static void ndspFrameCallback(void* userdata) {
@@ -124,6 +129,11 @@ static void triggerStepNotes(const LoopFile& loop, int step, double baseSamplesP
                 s_eng.synth.triggerNote(t, instId, note, vel, bendSemis, gateSamples, false);
             }
         }
+    }
+    if (s_eng.metronomeEnabled.load(std::memory_order_relaxed) && (step % 4) == 0) {
+        s_eng.metroPhase = 0.0f;
+        s_eng.metroFreq = ((step % 16) == 0) ? 1480.0f : 1040.0f;
+        s_eng.metroEnv = ((step % 16) == 0) ? 0.34f : 0.22f;
     }
 }
 
@@ -216,6 +226,22 @@ static void fillAudioBuffer(int16_t* outStereo, int numSamples) {
 
         if (chunk > 0) {
             s_eng.synth.render(&outStereo[rendered * 2], chunk, bend, vib, trackVols, trackMuted, revMix);
+            if (s_eng.metroEnv > 0.001f) {
+                const float phaseInc = s_eng.metroFreq / static_cast<float>(BB_SAMPLE_RATE);
+                for (int i = 0; i < chunk; ++i) {
+                    float clk = std::sin(s_eng.metroPhase * 6.2831853f) * s_eng.metroEnv;
+                    s_eng.metroPhase += phaseInc;
+                    if (s_eng.metroPhase >= 1.0f) s_eng.metroPhase -= 1.0f;
+                    s_eng.metroEnv *= 0.991f;
+                    int32_t add = static_cast<int32_t>(clk * 22000.0f);
+                    int32_t l = static_cast<int32_t>(outStereo[(rendered + i) * 2]) + add;
+                    int32_t r = static_cast<int32_t>(outStereo[(rendered + i) * 2 + 1]) + add;
+                    if (l < -32768) l = -32768; else if (l > 32767) l = 32767;
+                    if (r < -32768) r = -32768; else if (r > 32767) r = 32767;
+                    outStereo[(rendered + i) * 2] = static_cast<int16_t>(l);
+                    outStereo[(rendered + i) * 2 + 1] = static_cast<int16_t>(r);
+                }
+            }
             rendered += chunk;
             s_eng.sampleAccum += static_cast<double>(chunk);
         }
@@ -568,6 +594,15 @@ float audioEngineGetStepFraction() {
 
 float audioEngineGetPeakLevel() {
     return s_eng.peakLevel.load(std::memory_order_relaxed);
+}
+
+void audioEngineSetMetronome(bool enabled) {
+    s_eng.metronomeEnabled.store(enabled, std::memory_order_relaxed);
+    if (!enabled) s_eng.metroEnv = 0.0f;
+}
+
+bool audioEngineGetMetronome() {
+    return s_eng.metronomeEnabled.load(std::memory_order_relaxed);
 }
 
 } // namespace BardBeats

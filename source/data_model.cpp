@@ -447,4 +447,135 @@ void initStarterSong(SongFile& song, int presetIndex) {
     }
 }
 
+const char* getRootNoteName(uint8_t rootNote) {
+    static const char* kNames[12] = {
+        "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"
+    };
+    return kNames[rootNote % 12];
+}
+
+void transposeLoopRoot(LoopFile& loop, int semitoneDelta) {
+    if (semitoneDelta == 0) return;
+    int newRoot = (static_cast<int>(loop.rootNote) + semitoneDelta) % 12;
+    if (newRoot < 0) newRoot += 12;
+    loop.rootNote = static_cast<uint8_t>(newRoot);
+
+    for (int t = 0; t < BB_NUM_TRACKS; ++t) {
+        if (t == TRACK_DRUMS) continue; // Never transpose percussion MIDI triggers
+        for (int s = 0; s < BB_MAX_STEPS; ++s) {
+            StepCell& cell = loop.tracks[t].steps[s];
+            for (int n = 0; n < BB_MAX_POLY_PER_STEP; ++n) {
+                if (cell.notes[n] == 0) continue;
+                int shifted = static_cast<int>(cell.notes[n]) + semitoneDelta;
+                if (shifted < 24) shifted += 12;
+                if (shifted > 108) shifted -= 12;
+                cell.notes[n] = static_cast<uint8_t>(shifted);
+            }
+        }
+    }
+}
+
+static uint32_t nextDiceRand(uint32_t& seed) {
+    if (seed == 0) seed = 0x9E3779B9u;
+    seed ^= seed << 13;
+    seed ^= seed >> 17;
+    seed ^= seed << 5;
+    return seed;
+}
+
+void generateBardicDiceTrack(LoopFile& loop, int trackIdx, uint32_t& rngSeed) {
+    if (trackIdx < 0 || trackIdx >= BB_NUM_TRACKS) return;
+    TrackData& tr = loop.tracks[trackIdx];
+    for (int s = 0; s < BB_MAX_STEPS; ++s) {
+        clearStepCell(tr.steps[s]);
+    }
+
+    int numSteps = (loop.numBars == 2) ? BB_MAX_STEPS : 16;
+
+    if (trackIdx == TRACK_DRUMS) {
+        uint32_t grooveStyle = nextDiceRand(rngSeed) % 3;
+        for (int s = 0; s < numSteps; ++s) {
+            int stepInBar = s % 16;
+            if (stepInBar == 0 || (grooveStyle != 1 && stepInBar == 8) ||
+                (grooveStyle == 1 && stepInBar == 10) ||
+                (grooveStyle == 2 && stepInBar == 6) ||
+                ((nextDiceRand(rngSeed) % 100) < 18 && (stepInBar % 2 == 0))) {
+                addStepNote(tr.steps[s], DRUM_KICK, 118);
+            }
+            if (stepInBar == 4 || stepInBar == 12 ||
+                (grooveStyle == 2 && stepInBar == 15 && (nextDiceRand(rngSeed) % 2 == 0))) {
+                addStepNote(tr.steps[s], DRUM_SNARE, 110);
+            }
+            if ((stepInBar % 2 == 0 && (nextDiceRand(rngSeed) % 100) < 75) ||
+                (stepInBar % 2 == 1 && (nextDiceRand(rngSeed) % 100) < 30)) {
+                addStepNote(tr.steps[s], DRUM_SHAKER, static_cast<uint8_t>(68 + (nextDiceRand(rngSeed) % 28)));
+            }
+            if ((stepInBar == 2 || stepInBar == 10 || stepInBar == 14) && (nextDiceRand(rngSeed) % 100) < 40) {
+                addStepNote(tr.steps[s], DRUM_TAMB, 92);
+            }
+        }
+        return;
+    }
+
+    if (trackIdx == TRACK_BASS) {
+        static const int kBassDegrees[6] = { 0, 0, 2, 3, 4, 5 };
+        for (int s = 0; s < numSteps; ++s) {
+            int stepInBar = s % 16;
+            bool hit = (stepInBar == 0 || stepInBar == 8);
+            if (!hit && (stepInBar % 2 == 0)) hit = (nextDiceRand(rngSeed) % 100) < 55;
+            if (!hit && (stepInBar % 2 == 1)) hit = (nextDiceRand(rngSeed) % 100) < 22;
+            if (hit) {
+                int deg = (stepInBar == 0) ? 0 : kBassDegrees[nextDiceRand(rngSeed) % 6];
+                uint8_t note = getScaleNote(loop.scaleId, loop.rootNote, -1, deg);
+                uint8_t vel = static_cast<uint8_t>(92 + (nextDiceRand(rngSeed) % 24));
+                addStepNote(tr.steps[s], note, vel);
+                tr.steps[s].gateLength = (stepInBar % 4 == 0 && (nextDiceRand(rngSeed) % 2 == 0)) ? 2 : 1;
+            }
+        }
+        return;
+    }
+
+    if (trackIdx == TRACK_HARMONY) {
+        static const int kChordRoots[4] = { 0, 3, 4, 2 };
+        int barChord = kChordRoots[nextDiceRand(rngSeed) % 4];
+        for (int s = 0; s < numSteps; ++s) {
+            int stepInBar = s % 16;
+            if (stepInBar == 0) barChord = (s == 0) ? 0 : kChordRoots[nextDiceRand(rngSeed) % 4];
+            if (stepInBar == 0 || stepInBar == 6 || stepInBar == 8 || stepInBar == 12 ||
+                ((nextDiceRand(rngSeed) % 100) < 20)) {
+                int deg = (stepInBar == 0) ? barChord : (barChord + static_cast<int>(nextDiceRand(rngSeed) % 3) * 2);
+                uint8_t n1 = getScaleNote(loop.scaleId, loop.rootNote, 0, deg);
+                uint8_t n2 = getScaleNote(loop.scaleId, loop.rootNote, 0, deg + 2);
+                addStepNote(tr.steps[s], n1, 88);
+                if (stepInBar == 0 || stepInBar == 8) {
+                    addStepNote(tr.steps[s], n2, 82);
+                    tr.steps[s].gateLength = 3;
+                } else {
+                    tr.steps[s].gateLength = 2;
+                }
+            }
+        }
+        return;
+    }
+
+    // TRACK_MELODY: lyrical 8th/16th motif
+    int curDeg = 0;
+    for (int s = 0; s < numSteps; ++s) {
+        int stepInBar = s % 16;
+        bool place = (stepInBar == 0) ||
+                     ((stepInBar % 2 == 0) && (nextDiceRand(rngSeed) % 100) < 62) ||
+                     ((stepInBar % 2 == 1) && (nextDiceRand(rngSeed) % 100) < 26);
+        if (place) {
+            int delta = static_cast<int>(nextDiceRand(rngSeed) % 5) - 2; // -2..+2 step motion
+            curDeg += delta;
+            if (curDeg < -2) curDeg = 0;
+            if (curDeg > 9) curDeg = 7;
+            uint8_t note = getScaleNote(loop.scaleId, loop.rootNote, 0, curDeg);
+            uint8_t vel = static_cast<uint8_t>(90 + (nextDiceRand(rngSeed) % 28));
+            addStepNote(tr.steps[s], note, vel);
+            tr.steps[s].gateLength = (stepInBar % 4 == 0 && (nextDiceRand(rngSeed) % 100) < 45) ? 2 : 1;
+        }
+    }
+}
+
 } // namespace BardBeats

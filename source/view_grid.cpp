@@ -12,13 +12,15 @@ static constexpr float CELL_H = 14.0f;
 
 static int s_lastPaintStep = -1;
 static int s_lastPaintRow = -1;
+static int s_dragStartStep = -1;
+static int s_dragStartRow = -1;
 static bool s_paintAddMode = true;
 
 void viewGridDrawTop(const AppState& state) {
     uiDrawTopHeader(state);
     uiDrawTopFourTrackOverview(state, 40.0f, 166.0f);
     uiDrawText(10.0f, 212.0f, 0.36f, 0.36f, Colors::MUTED_TEXT,
-               "Tap/Drag Grid | A/B/X/Y/D-Pad play live | Circle Pad bends pitch");
+               "Tap/Drag Grid (Drag right=Sustain) | A/B/X/Y/D-Pad play live");
 }
 
 void viewGridDrawBottom(const AppState& state) {
@@ -28,20 +30,21 @@ void viewGridDrawBottom(const AppState& state) {
     }
 
     // Sub-toolbar (y: 67..87)
-    Rect btnBpmDn  = {  3.0f, 67.0f, 34.0f, 20.0f };
-    Rect btnBpmUp  = { 39.0f, 67.0f, 34.0f, 20.0f };
-    Rect btnScale  = { 75.0f, 67.0f, 62.0f, 20.0f };
-    Rect btnBars   = {139.0f, 67.0f, 44.0f, 20.0f };
-    Rect btnSwing  = {185.0f, 67.0f, 46.0f, 20.0f };
-    Rect btnMix    = {233.0f, 67.0f, 40.0f, 20.0f };
-    Rect btnClear  = {275.0f, 67.0f, 42.0f, 20.0f };
+    Rect btnBpmDn  = {  3.0f, 67.0f, 30.0f, 20.0f };
+    Rect btnBpmUp  = { 35.0f, 67.0f, 30.0f, 20.0f };
+    Rect btnScale  = { 67.0f, 67.0f, 56.0f, 20.0f };
+    Rect btnBars   = {125.0f, 67.0f, 42.0f, 20.0f };
+    Rect btnSwing  = {169.0f, 67.0f, 40.0f, 20.0f };
+    Rect btnDice   = {211.0f, 67.0f, 36.0f, 20.0f };
+    Rect btnMix    = {249.0f, 67.0f, 34.0f, 20.0f };
+    Rect btnClear  = {285.0f, 67.0f, 32.0f, 20.0f };
 
-    uiDrawButton(btnBpmDn, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-BPM", 0.32f);
-    uiDrawButton(btnBpmUp, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+BPM", 0.32f);
+    uiDrawButton(btnBpmDn, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-BPM", 0.30f);
+    uiDrawButton(btnBpmUp, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+BPM", 0.30f);
 
     char scaleBuf[20];
     std::snprintf(scaleBuf, sizeof(scaleBuf), "%s", getScaleName(state.currentLoop.scaleId));
-    uiDrawButton(btnScale, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, scaleBuf, 0.32f);
+    uiDrawButton(btnScale, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, scaleBuf, 0.30f);
 
     char barBuf[16];
     if (state.currentLoop.numBars == 2) {
@@ -50,17 +53,18 @@ void viewGridDrawBottom(const AppState& state) {
         std::snprintf(barBuf, sizeof(barBuf), "1B:16");
     }
     uiDrawButton(btnBars, state.currentLoop.numBars == 2 ? Colors::BLUE_ACTION : Colors::BG_CARD,
-                 Colors::BORDER_WOOD, Colors::CREAM_TEXT, barBuf, 0.32f);
+                 Colors::BORDER_WOOD, Colors::CREAM_TEXT, barBuf, 0.30f);
 
     char swBuf[16];
     std::snprintf(swBuf, sizeof(swBuf), "Sw%u", state.currentLoop.swingPercent);
     uiDrawButton(btnSwing, state.currentLoop.swingPercent > 50 ? Colors::AMBER_JAM : Colors::BG_CARD,
                  Colors::BORDER_WOOD,
                  state.currentLoop.swingPercent > 50 ? Colors::BG_DARK : Colors::CREAM_TEXT,
-                 swBuf, 0.32f);
+                 swBuf, 0.30f);
 
-    uiDrawButton(btnMix,   Colors::BG_CARD_ALT, Colors::GOLD_TEXT, Colors::GOLD_TEXT, "MIX", 0.32f);
-    uiDrawButton(btnClear, Colors::BG_CARD,     Colors::RED_REC,   Colors::RED_REC,   "CLR", 0.32f);
+    uiDrawButton(btnDice,  Colors::PURPLE_SPELL, Colors::GOLD_TEXT, Colors::CREAM_TEXT, "DICE", 0.30f);
+    uiDrawButton(btnMix,   Colors::BG_CARD_ALT,  Colors::GOLD_TEXT, Colors::GOLD_TEXT,  "MIX",  0.30f);
+    uiDrawButton(btnClear, Colors::BG_CARD,      Colors::RED_REC,   Colors::RED_REC,    "CLR",  0.30f);
 
     const TrackData& trk = state.currentLoop.tracks[state.activeTrack];
     int curStep = audioEngineGetCurrentStep();
@@ -93,6 +97,15 @@ void viewGridDrawBottom(const AppState& state) {
                 bg = active ? Colors::PLAYHEAD_LINE : Colors::BG_CARD;
             }
             C2D_DrawRectSolid(rx + 1.0f, ry + 1.0f, 0.1f, CELL_W - 2.0f, CELL_H - 2.0f, bg);
+
+            if (active && state.activeTrack != TRACK_DRUMS && trk.steps[absStep].gateLength > 1) {
+                int span = trk.steps[absStep].gateLength;
+                if (step + span > BB_STEPS_PER_LOOP) span = BB_STEPS_PER_LOOP - step;
+                if (span > 1) {
+                    float tieW = static_cast<float>(span) * CELL_W - 4.0f;
+                    C2D_DrawRectSolid(rx + 2.0f, ry + 3.0f, 0.25f, tieW, CELL_H - 6.0f, trkCol);
+                }
+            }
         }
     }
 }
@@ -108,17 +121,20 @@ void viewGridHandleTouch(AppState& state, float tx, float ty, bool isJustPressed
     if (isReleased) {
         s_lastPaintStep = -1;
         s_lastPaintRow = -1;
+        s_dragStartStep = -1;
+        s_dragStartRow = -1;
         return;
     }
 
     if (isJustPressed && ty >= 67.0f && ty < 87.0f) {
-        Rect btnBpmDn  = {  3.0f, 67.0f, 34.0f, 20.0f };
-        Rect btnBpmUp  = { 39.0f, 67.0f, 34.0f, 20.0f };
-        Rect btnScale  = { 75.0f, 67.0f, 62.0f, 20.0f };
-        Rect btnBars   = {139.0f, 67.0f, 44.0f, 20.0f };
-        Rect btnSwing  = {185.0f, 67.0f, 46.0f, 20.0f };
-        Rect btnMix    = {233.0f, 67.0f, 40.0f, 20.0f };
-        Rect btnClear  = {275.0f, 67.0f, 42.0f, 20.0f };
+        Rect btnBpmDn  = {  3.0f, 67.0f, 30.0f, 20.0f };
+        Rect btnBpmUp  = { 35.0f, 67.0f, 30.0f, 20.0f };
+        Rect btnScale  = { 67.0f, 67.0f, 56.0f, 20.0f };
+        Rect btnBars   = {125.0f, 67.0f, 42.0f, 20.0f };
+        Rect btnSwing  = {169.0f, 67.0f, 40.0f, 20.0f };
+        Rect btnDice   = {211.0f, 67.0f, 36.0f, 20.0f };
+        Rect btnMix    = {249.0f, 67.0f, 34.0f, 20.0f };
+        Rect btnClear  = {285.0f, 67.0f, 32.0f, 20.0f };
 
         if (btnBpmDn.contains(tx, ty)) {
             if (state.currentLoop.bpm > 60) state.currentLoop.bpm -= 4;
@@ -130,14 +146,11 @@ void viewGridHandleTouch(AppState& state, float tx, float ty, bool isJustPressed
             state.currentLoop.scaleId = (state.currentLoop.scaleId + 1) % SCALE_COUNT;
             state.syncAudioLoop();
         } else if (btnBars.contains(tx, ty)) {
-            if (state.currentLoop.numBars == 2 && state.gridBarPage == 0) {
-                state.gridBarPage = 1;
-                state.setToast("Viewing Bar 2 (Steps 17-32)", 70);
-            } else {
-                state.toggleLoopBars();
-            }
+            state.cycleLoopBarsAndPage();
         } else if (btnSwing.contains(tx, ty)) {
             state.cycleSwing();
+        } else if (btnDice.contains(tx, ty)) {
+            state.rollBardicDice();
         } else if (btnMix.contains(tx, ty)) {
             state.showMixDrawer = true;
         } else if (btnClear.contains(tx, ty)) {
@@ -169,9 +182,16 @@ void viewGridHandleTouch(AppState& state, float tx, float ty, bool isJustPressed
         if (isJustPressed) {
             state.snapshotForUndo(state.activeTrack);
             s_paintAddMode = !stepHasNote(cell, note);
+            s_dragStartStep = absStep;
+            s_dragStartRow = row;
         }
 
-        if (s_paintAddMode) {
+        if (isHeld && !isJustPressed && s_paintAddMode && s_dragStartStep >= 0 &&
+            row == s_dragStartRow && absStep > s_dragStartStep && state.activeTrack != TRACK_DRUMS) {
+            int gate = (absStep - s_dragStartStep) + 1;
+            if (gate > 16) gate = 16;
+            state.currentLoop.tracks[state.activeTrack].steps[s_dragStartStep].gateLength = static_cast<uint8_t>(gate);
+        } else if (s_paintAddMode) {
             addStepNote(cell, note, 100, 0);
             audioEngineTriggerLiveNote(state.activeTrack, state.currentLoop.tracks[state.activeTrack].instrumentId, note, 100);
         } else if (stepHasNote(cell, note)) {

@@ -182,6 +182,19 @@ void AppState::toggleLoopBars() {
     syncAudioLoop();
 }
 
+void AppState::cycleLoopBarsAndPage() {
+    if (currentLoop.numBars == 1) {
+        toggleLoopBars();
+        gridBarPage = 0;
+        setToast("2 Bars: Viewing Bar 1 (1-16)", 80);
+    } else if (gridBarPage == 0) {
+        gridBarPage = 1;
+        setToast("2 Bars: Viewing Bar 2 (17-32)", 80);
+    } else {
+        toggleLoopBars();
+    }
+}
+
 void AppState::cycleSwing() {
     if (currentLoop.swingPercent < 54) {
         currentLoop.swingPercent = 58;
@@ -194,6 +207,41 @@ void AppState::cycleSwing() {
         setToast("Swing: 50% (Straight)", 80);
     }
     syncAudioLoop();
+}
+
+void AppState::cycleRootKey() {
+    snapshotForUndo(activeTrack);
+    transposeLoopRoot(currentLoop, 1);
+    syncAudioLoop();
+    char buf[48];
+    std::snprintf(buf, sizeof(buf), "Key: %s", getRootNoteName(currentLoop.rootNote));
+    setToast(buf, 80);
+}
+
+void AppState::rollBardicDice() {
+    snapshotForUndo(activeTrack);
+    diceSeed ^= static_cast<uint32_t>(audioEngineGetCurrentStep() + 1) * 2654435761u;
+    generateBardicDiceTrack(currentLoop, activeTrack, diceSeed);
+    syncAudioLoop();
+    char buf[48];
+    std::snprintf(buf, sizeof(buf), "Bardic Dice: %s!", getTrackRoleName(activeTrack));
+    setToast(buf, 85);
+}
+
+void AppState::toggleMetronome() {
+    metronomeEnabled = !metronomeEnabled;
+    audioEngineSetMetronome(metronomeEnabled);
+    setToast(metronomeEnabled ? "Metronome: ON" : "Metronome: OFF", 75);
+}
+
+void AppState::cyclePerfMode() {
+    perfMode = (perfMode + 1) % 3;
+    arpHeldDegree = -1;
+    lastArpStep = -1;
+    arpCycleIdx = 0;
+    if (perfMode == 0) setToast("Play Mode: NOTE", 70);
+    else if (perfMode == 1) setToast("Play Mode: CHORD", 70);
+    else setToast("Play Mode: ARP", 70);
 }
 
 void AppState::saveCurrentLoop() {
@@ -259,15 +307,14 @@ void AppState::cueLoopFromSpellbook(uint16_t loopId) {
     if (!storageLoadLoop(loopId, loaded)) return;
 
     if (spellbookQuantizedCue && isPlaying) {
-        currentLoop = loaded;
-        hasUndo = false;
-        gridBarPage = 0;
+        queuedSpellbookLoop = loaded;
+        hasQueuedSpellbookLoop = true;
         audioEngineQueueNextBarLoop(loaded);
-        loadActiveVocalForCurrentMode();
         char buf[64];
-        std::snprintf(buf, sizeof(buf), "Queued next bar: %s", currentLoop.name);
+        std::snprintf(buf, sizeof(buf), "Queued next bar: %s", loaded.name);
         setToast(buf, 90);
     } else {
+        hasQueuedSpellbookLoop = false;
         currentLoop = loaded;
         hasUndo = false;
         gridBarPage = 0;
@@ -504,10 +551,39 @@ void AppState::exportCurrentSongWav() {
     }
 }
 
+void AppState::cycleSongSlotLoop(int slotIdx, int dir) {
+    if (slotIdx < 0 || slotIdx >= currentSong.numEntries || savedLoops.empty()) return;
+    uint16_t curId = currentSong.chain[slotIdx].loopId;
+    int foundIdx = 0;
+    for (int i = 0; i < static_cast<int>(savedLoops.size()); ++i) {
+        if (savedLoops[i].loopId == curId) {
+            foundIdx = i;
+            break;
+        }
+    }
+    int count = static_cast<int>(savedLoops.size());
+    int nextIdx = (foundIdx + dir) % count;
+    if (nextIdx < 0) nextIdx += count;
+    currentSong.chain[slotIdx].loopId = savedLoops[nextIdx].loopId;
+    saveCurrentSong();
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "Slot %d -> %s", slotIdx + 1, savedLoops[nextIdx].name);
+    setToast(buf, 85);
+}
+
+int AppState::getLoopNumBarsById(uint16_t loopId) const {
+    for (const auto& s : savedLoops) {
+        if (s.loopId == loopId) return (s.numBars == 2) ? 2 : 1;
+    }
+    return 1;
+}
+
 int AppState::getTotalSongBars() const {
     int total = 0;
     for (int i = 0; i < currentSong.numEntries; ++i) {
-        total += (currentSong.chain[i].repeatCount > 0 ? currentSong.chain[i].repeatCount : 1);
+        int reps = (currentSong.chain[i].repeatCount > 0 ? currentSong.chain[i].repeatCount : 1);
+        int bars = getLoopNumBarsById(currentSong.chain[i].loopId);
+        total += reps * bars;
     }
     return total;
 }
@@ -728,19 +804,37 @@ void AppState::toggleWifiMidi() {
 void AppState::playLiveDegree(int degree, uint8_t velocity) {
     if (degree < 0 || degree >= BB_GRID_ROWS) return;
 
-    uint8_t note = (activeTrack == TRACK_DRUMS)
-                       ? getDrumPieceNote(degree)
-                       : getScaleNote(currentLoop.scaleId, currentLoop.rootNote,
-                                      (activeTrack == TRACK_BASS ? octaveOffset - 1 : octaveOffset), degree);
+    int oct = (activeTrack == TRACK_BASS ? octaveOffset - 1 : octaveOffset);
     uint8_t instId = currentLoop.tracks[activeTrack].instrumentId;
 
-    audioEngineTriggerLiveNote(activeTrack, instId, note, velocity);
-    if (wifiMidiEnabled) {
-        uint8_t ch = (activeTrack == TRACK_DRUMS) ? 9 : static_cast<uint8_t>(activeTrack);
-        wifiMidiSendNoteOn(ch, note, velocity);
+    int noteCount = 1;
+    uint8_t notes[3] = {0, 0, 0};
+    if (activeTrack == TRACK_DRUMS) {
+        notes[0] = getDrumPieceNote(degree);
+    } else if (perfMode == 1) {
+        // Chord Strum: 3-note scale triad
+        noteCount = 3;
+        notes[0] = getScaleNote(currentLoop.scaleId, currentLoop.rootNote, oct, degree);
+        notes[1] = getScaleNote(currentLoop.scaleId, currentLoop.rootNote, oct, degree + 2);
+        notes[2] = getScaleNote(currentLoop.scaleId, currentLoop.rootNote, oct, degree + 4);
+    } else {
+        notes[0] = getScaleNote(currentLoop.scaleId, currentLoop.rootNote, oct, degree);
+        if (perfMode == 2) {
+            arpHeldDegree = degree;
+            lastArpStep = audioEngineGetCurrentStep();
+            arpCycleIdx = 0;
+        }
     }
 
-    lastLiveNote = note;
+    for (int i = 0; i < noteCount; ++i) {
+        audioEngineTriggerLiveNote(activeTrack, instId, notes[i], velocity);
+        if (wifiMidiEnabled) {
+            uint8_t ch = (activeTrack == TRACK_DRUMS) ? 9 : static_cast<uint8_t>(activeTrack);
+            wifiMidiSendNoteOn(ch, notes[i], velocity);
+        }
+    }
+
+    lastLiveNote = notes[0];
     lastLiveDegree = degree;
     liveFlashFrames = 14;
 
@@ -752,7 +846,11 @@ void AppState::playLiveDegree(int degree, uint8_t velocity) {
         int8_t bendQ4 = static_cast<int8_t>(std::lround(circleBendSemis * 16.0f));
         if (bendQ4 > 32) bendQ4 = 32;
         if (bendQ4 < -32) bendQ4 = -32;
-        addStepNote(currentLoop.tracks[activeTrack].steps[qStep], note, velocity, bendQ4);
+        for (int i = 0; i < noteCount; ++i) {
+            addStepNote(currentLoop.tracks[activeTrack].steps[qStep], notes[i], velocity, bendQ4);
+        }
+        recHeldStep = qStep;
+        recHeldNote = notes[0];
         syncAudioLoop();
     }
 }
@@ -763,6 +861,11 @@ void AppState::releaseLiveNotes() {
         uint8_t ch = (activeTrack == TRACK_DRUMS) ? 9 : static_cast<uint8_t>(activeTrack);
         wifiMidiSendNoteOff(ch, lastLiveNote);
     }
+    arpHeldDegree = -1;
+    lastArpStep = -1;
+    arpCycleIdx = 0;
+    recHeldStep = -1;
+    recHeldNote = 0;
 }
 
 void AppState::handleHardwareInput(u32 kDown, u32 kHeld, u32 kUp, const circlePosition& cpad) {
@@ -770,6 +873,18 @@ void AppState::handleHardwareInput(u32 kDown, u32 kHeld, u32 kUp, const circlePo
     if (liveFlashFrames > 0) liveFlashFrames--;
 
     pollVocalRecording();
+
+    // Promote quantized Spellbook cue once audio engine swaps at step 0 (#11)
+    if (hasQueuedSpellbookLoop && !audioEngineHasQueuedLoop()) {
+        currentLoop = queuedSpellbookLoop;
+        hasQueuedSpellbookLoop = false;
+        hasUndo = false;
+        gridBarPage = 0;
+        loadActiveVocalForCurrentMode();
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "Playing: %s", currentLoop.name);
+        setToast(buf, 75);
+    }
 
     if (kDown & KEY_START) {
         togglePlay();
@@ -825,6 +940,41 @@ void AppState::handleHardwareInput(u32 kDown, u32 kHeld, u32 kUp, const circlePo
         }
         if ((kUp & ALL_NOTE_MASK) && !(kHeld & ALL_NOTE_MASK)) {
             releaseLiveNotes();
+        }
+    }
+
+    // Arpeggiator stepping while note is held (#12)
+    if (arpHeldDegree >= 0 && activeTrack != TRACK_DRUMS && perfMode == 2 && isPlaying) {
+        int curStep = audioEngineGetCurrentStep();
+        if (curStep != lastArpStep) {
+            lastArpStep = curStep;
+            static const int kArpOffsets[4] = { 0, 2, 4, 7 };
+            arpCycleIdx = (arpCycleIdx + 1) & 3;
+            int oct = (activeTrack == TRACK_BASS ? octaveOffset - 1 : octaveOffset);
+            uint8_t note = getScaleNote(currentLoop.scaleId, currentLoop.rootNote, oct,
+                                        arpHeldDegree + kArpOffsets[arpCycleIdx]);
+            uint8_t instId = currentLoop.tracks[activeTrack].instrumentId;
+            audioEngineReleaseLiveNotes(activeTrack);
+            audioEngineTriggerLiveNote(activeTrack, instId, note, 98);
+            lastLiveNote = note;
+            liveFlashFrames = 8;
+            if (isRecording && activeView != VIEW_SONG) {
+                addStepNote(currentLoop.tracks[activeTrack].steps[curStep], note, 98, 0);
+                syncAudioLoop();
+            }
+        }
+    }
+
+    // Live hold-sustain gateLength recording (#13)
+    if (recHeldStep >= 0 && isRecording && isPlaying && activeView != VIEW_SONG && perfMode != 2) {
+        int totalSteps = (currentLoop.numBars == 2) ? BB_MAX_STEPS : BB_STEPS_PER_LOOP;
+        int curStep = audioEngineGetCurrentStep();
+        int heldSteps = (curStep - recHeldStep + totalSteps) % totalSteps + 1;
+        if (heldSteps > 16) heldSteps = 16;
+        StepCell& cell = currentLoop.tracks[activeTrack].steps[recHeldStep];
+        if (heldSteps > cell.gateLength && stepHasNote(cell, recHeldNote)) {
+            cell.gateLength = static_cast<uint8_t>(heldSteps);
+            syncAudioLoop();
         }
     }
 }

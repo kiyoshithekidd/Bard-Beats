@@ -9,7 +9,7 @@ static int s_heldPad = -1;
 static Rect getPadRect(int idx) {
     int col = idx % 4;
     int row = idx / 4; // 0 = top row (deg 4..7), 1 = bottom row (deg 0..3)
-    return { 4.0f + col * 79.0f, 70.0f + row * 67.0f, 75.0f, 63.0f };
+    return { 4.0f + col * 79.0f, 89.0f + row * 57.0f, 75.0f, 54.0f };
 }
 
 static int padIndexToDegree(int idx) {
@@ -31,6 +31,18 @@ void viewPadsDrawTop(const AppState& state) {
 }
 
 void viewPadsDrawBottom(const AppState& state) {
+    Rect btnMode = {   4.0f, 67.0f, 154.0f, 19.0f };
+    Rect btnDice = { 162.0f, 67.0f,  76.0f, 19.0f };
+    Rect btnOct  = { 242.0f, 67.0f,  74.0f, 19.0f };
+
+    const char* modeStr = (state.perfMode == 1) ? "MODE: CHORD"
+                                                : (state.perfMode == 2 ? "MODE: ARP" : "MODE: NOTE");
+    uiDrawButton(btnMode, state.perfMode > 0 ? Colors::BLUE_ACTION : Colors::BG_CARD,
+                 Colors::BORDER_WOOD, Colors::CREAM_TEXT, modeStr, 0.34f);
+    uiDrawButton(btnDice, Colors::PURPLE_SPELL, Colors::GOLD_TEXT, Colors::CREAM_TEXT, "DICE", 0.34f);
+    const char* octStr = (state.octaveOffset < 0) ? "OCT: LOW" : (state.octaveOffset > 0 ? "OCT: HI" : "OCT: MID");
+    uiDrawButton(btnOct, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, octStr, 0.32f);
+
     uint32_t trkCol = Colors::TRACK_COLORS[state.activeTrack];
     for (int i = 0; i < 8; ++i) {
         int deg = padIndexToDegree(i);
@@ -47,10 +59,10 @@ void viewPadsDrawBottom(const AppState& state) {
                                         (state.activeTrack == TRACK_BASS ? state.octaveOffset - 1 : state.octaveOffset), deg);
             getNoteName(note, lbl, sizeof(lbl));
         }
-        uiDrawButton(r, bg, border, lit ? Colors::BG_DARK : Colors::CREAM_TEXT, lbl, 0.50f);
+        uiDrawButton(r, bg, border, lit ? Colors::BG_DARK : Colors::CREAM_TEXT, lbl, 0.48f);
 
         // Subtle accent zone line on lower 35% of pad
-        C2D_DrawRectSolid(r.x + 6.0f, r.y + r.h - 14.0f, 0.2f, r.w - 12.0f, 1.0f,
+        C2D_DrawRectSolid(r.x + 6.0f, r.y + r.h - 12.0f, 0.2f, r.w - 12.0f, 1.0f,
                           C2D_Color32(0xFF, 0xFF, 0xFF, 0x28));
     }
 }
@@ -65,6 +77,19 @@ void viewPadsHandleTouch(AppState& state, float tx, float ty, bool isJustPressed
     }
 
     if (isJustPressed) {
+        if (ty >= 67.0f && ty < 87.0f) {
+            Rect btnMode = {   4.0f, 67.0f, 154.0f, 19.0f };
+            Rect btnDice = { 162.0f, 67.0f,  76.0f, 19.0f };
+            Rect btnOct  = { 242.0f, 67.0f,  74.0f, 19.0f };
+            if (btnMode.contains(tx, ty)) {
+                state.cyclePerfMode();
+            } else if (btnDice.contains(tx, ty)) {
+                state.rollBardicDice();
+            } else if (btnOct.contains(tx, ty)) {
+                state.octaveOffset = (state.octaveOffset == 1) ? -1 : (state.octaveOffset + 1);
+            }
+            return;
+        }
         for (int i = 0; i < 8; ++i) {
             Rect r = getPadRect(i);
             if (r.contains(tx, ty)) {

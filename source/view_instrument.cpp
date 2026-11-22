@@ -147,9 +147,21 @@ void viewInstrumentDrawTop(const AppState& state) {
 }
 
 void viewInstrumentDrawBottom(const AppState& state) {
+    Rect btnMode = {   4.0f, 67.0f, 154.0f, 19.0f };
+    Rect btnDice = { 162.0f, 67.0f,  76.0f, 19.0f };
+    Rect btnOct  = { 242.0f, 67.0f,  74.0f, 19.0f };
+
+    const char* modeStr = (state.perfMode == 1) ? "MODE: CHORD"
+                                                : (state.perfMode == 2 ? "MODE: ARP" : "MODE: NOTE");
+    uiDrawButton(btnMode, state.perfMode > 0 ? Colors::BLUE_ACTION : Colors::BG_CARD,
+                 Colors::BORDER_WOOD, Colors::CREAM_TEXT, modeStr, 0.34f);
+    uiDrawButton(btnDice, Colors::PURPLE_SPELL, Colors::GOLD_TEXT, Colors::CREAM_TEXT, "DICE", 0.34f);
+    const char* octStr = (state.octaveOffset < 0) ? "OCT: LOW" : (state.octaveOffset > 0 ? "OCT: HI" : "OCT: MID");
+    uiDrawButton(btnOct, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, octStr, 0.32f);
+
     uint32_t trkCol = Colors::TRACK_COLORS[state.activeTrack];
     for (int deg = 0; deg < 8; ++deg) {
-        Rect r = { 4.0f + deg * 39.2f, 70.0f, 36.5f, 132.0f };
+        Rect r = { 4.0f + deg * 39.2f, 89.0f, 36.5f, 113.0f };
         bool lit = (s_lastStrumDeg == deg) || (state.liveFlashFrames > 0 && state.lastLiveDegree == deg);
         uint32_t bg = lit ? trkCol : ((deg % 2 == 0) ? Colors::BG_CARD : Colors::BG_CARD_ALT);
 
@@ -173,7 +185,21 @@ void viewInstrumentHandleTouch(AppState& state, float tx, float ty, bool isJustP
         return;
     }
 
-    if ((isJustPressed || isHeld) && ty >= 70.0f && ty < 202.0f) {
+    if (isJustPressed && ty >= 67.0f && ty < 87.0f) {
+        Rect btnMode = {   4.0f, 67.0f, 154.0f, 19.0f };
+        Rect btnDice = { 162.0f, 67.0f,  76.0f, 19.0f };
+        Rect btnOct  = { 242.0f, 67.0f,  74.0f, 19.0f };
+        if (btnMode.contains(tx, ty)) {
+            state.cyclePerfMode();
+        } else if (btnDice.contains(tx, ty)) {
+            state.rollBardicDice();
+        } else if (btnOct.contains(tx, ty)) {
+            state.octaveOffset = (state.octaveOffset == 1) ? -1 : (state.octaveOffset + 1);
+        }
+        return;
+    }
+
+    if ((isJustPressed || isHeld) && ty >= 89.0f && ty < 202.0f) {
         int deg = static_cast<int>((tx - 4.0f) / 39.2f);
         if (deg >= 0 && deg < 8 && deg != s_lastStrumDeg) {
             s_lastStrumDeg = deg;

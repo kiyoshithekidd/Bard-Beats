@@ -105,7 +105,17 @@ void uiDrawTopHeader(const AppState& state) {
         char stepBuf[24];
         std::snprintf(stepBuf, sizeof(stepBuf), "STEP %02d", step + 1);
         uint32_t stepCol = state.isPlaying ? Colors::PLAYHEAD_LINE : Colors::MUTED_TEXT;
-        uiDrawText(325.0f + d, 9.0f, 0.45f, 0.45f, stepCol, stepBuf);
+        uiDrawText(325.0f + d, 6.0f, 0.42f, 0.42f, stepCol, stepBuf);
+    }
+
+    // Live VU Pulse Meter (#17)
+    float peak = audioEngineGetPeakLevel();
+    if (peak > 1.0f) peak = 1.0f;
+    if (peak < 0.0f) peak = 0.0f;
+    C2D_DrawRectSolid(325.0f + d, 24.0f, 0.3f, 66.0f, 5.0f, Colors::BG_DARK);
+    if (peak > 0.01f) {
+        uint32_t vuCol = (peak > 0.82f) ? Colors::RED_REC : (peak > 0.45f ? Colors::GOLD_TEXT : Colors::GREEN_PLAY);
+        C2D_DrawRectSolid(325.0f + d, 24.0f, 0.35f, 66.0f * peak, 5.0f, vuCol);
     }
 
     if (!audioEngineIsDspReady()) {
@@ -142,10 +152,14 @@ void uiDrawTopFourTrackOverview(const AppState& state, float yStart, float heigh
         for (int s = 0; s < totalSteps; ++s) {
             float sx = labelW + s * stepW + d * 0.5f;
             bool hasNote = stepHasAnyNote(state.currentLoop.tracks[t].steps[s]);
-            uint32_t cellCol = hasNote
-                ? (state.currentLoop.tracks[t].muted ? Colors::MUTED_TEXT : Colors::TRACK_COLORS[t])
-                : ((s % 4 == 0) ? Colors::BG_CARD : Colors::BG_DARK);
-            C2D_DrawRectSolid(sx + 0.5f, y + 5.0f, 0.2f, stepW - 1.5f, rowH - 10.0f, cellCol);
+            bool isHit = state.isPlaying && (s == curStep) && hasNote && !state.currentLoop.tracks[t].muted;
+            uint32_t cellCol = isHit
+                ? Colors::GOLD_TEXT
+                : (hasNote
+                    ? (state.currentLoop.tracks[t].muted ? Colors::MUTED_TEXT : Colors::TRACK_COLORS[t])
+                    : ((s % 4 == 0) ? Colors::BG_CARD : Colors::BG_DARK));
+            float inset = isHit ? 3.0f : 5.0f;
+            C2D_DrawRectSolid(sx + 0.5f, y + inset, isHit ? 0.35f : 0.2f, stepW - 1.5f, rowH - inset * 2.0f, cellCol);
         }
     }
 
@@ -207,11 +221,14 @@ void uiDrawBottomChrome(const AppState& state) {
         uint32_t border = active ? Colors::TRACK_COLORS[t] : Colors::BORDER_WOOD;
         uint32_t txtCol = muted ? Colors::MUTED_TEXT : (active ? Colors::CREAM_TEXT : Colors::TRACK_COLORS[t]);
 
-        char label[20];
-        std::snprintf(label, sizeof(label), "%s%s",
-                      muted ? "M:" : "",
-                      getInstrumentShortName(state.currentLoop.tracks[t].instrumentId));
-        uiDrawButton(tr, bg, border, txtCol, label, 0.35f);
+        uiDrawButton(tr, bg, border, txtCol, "", 0.35f);
+        Rect muteBox = { tr.x + 2.0f, tr.y + 3.0f, 15.0f, 20.0f };
+        C2D_DrawRectSolid(muteBox.x, muteBox.y, 0.16f, muteBox.w, muteBox.h,
+                          muted ? Colors::RED_REC : Colors::BG_DARK);
+        uiDrawTextCentered(muteBox, 0.30f, muted ? Colors::CREAM_TEXT : Colors::MUTED_TEXT, "M");
+        Rect instBox = { tr.x + 17.0f, tr.y, tr.w - 18.0f, tr.h };
+        uiDrawTextCentered(instBox, 0.33f, txtCol,
+                           getInstrumentShortName(state.currentLoop.tracks[t].instrumentId));
     }
 
     bool hasVoc = inSong ? (state.currentSong.hasSongVocal != 0) : (state.currentLoop.hasVocalClip != 0);
@@ -271,7 +288,15 @@ bool uiHandleBottomChromeTouch(AppState& state, float tx, float ty) {
             for (int t = 0; t < BB_NUM_TRACKS; ++t) {
                 Rect tr = { 4.0f + t * 65.0f, 38.0f, 63.0f, 26.0f };
                 if (tr.contains(tx, ty)) {
-                    if (state.activeTrack == t) {
+                    if (tx < tr.x + 19.0f) {
+                        state.currentLoop.tracks[t].muted = state.currentLoop.tracks[t].muted ? 0 : 1;
+                        state.syncAudioLoop();
+                        char buf[48];
+                        std::snprintf(buf, sizeof(buf), "%s: %s",
+                                      getTrackRoleName(t),
+                                      state.currentLoop.tracks[t].muted ? "MUTED" : "UNMUTED");
+                        state.setToast(buf, 70);
+                    } else if (state.activeTrack == t) {
                         uint8_t nextInst = cycleTrackInstrument(t, state.currentLoop.tracks[t].instrumentId);
                         state.currentLoop.tracks[t].instrumentId = nextInst;
                         state.syncAudioLoop();
@@ -301,12 +326,12 @@ bool uiHandleBottomChromeTouch(AppState& state, float tx, float ty) {
 
 // ---- Mix & Settings Drawer (#4 & #6) ----
 
-static void drawSliderRow(float y, const char* label, uint8_t value, uint32_t fillCol) {
-    uiDrawText(8.0f, y + 2.0f, 0.36f, 0.36f, Colors::CREAM_TEXT, label);
+static void drawSliderRow(float y, const char* label, uint8_t value, uint32_t fillCol, bool muted = false) {
+    uiDrawText(8.0f, y + 2.0f, 0.36f, 0.36f, muted ? Colors::RED_REC : Colors::CREAM_TEXT, label);
     Rect bar = { 74.0f, y + 2.0f, 204.0f, 14.0f };
     C2D_DrawRectSolid(bar.x, bar.y, 0.1f, bar.w, bar.h, Colors::BG_DARK);
     float w = (static_cast<float>(value) / 100.0f) * bar.w;
-    C2D_DrawRectSolid(bar.x, bar.y, 0.15f, w, bar.h, fillCol);
+    C2D_DrawRectSolid(bar.x, bar.y, 0.15f, w, bar.h, muted ? Colors::MUTED_TEXT : fillCol);
     char valBuf[8];
     std::snprintf(valBuf, sizeof(valBuf), "%u", value);
     uiDrawText(284.0f, y + 2.0f, 0.36f, 0.36f, Colors::GOLD_TEXT, valBuf);
@@ -315,31 +340,52 @@ static void drawSliderRow(float y, const char* label, uint8_t value, uint32_t fi
 void uiDrawMixDrawer(const AppState& state) {
     C2D_DrawRectSolid(2.0f, 67.0f, 0.08f, 316.0f, 137.0f, Colors::BG_PANEL);
 
-    drawSliderRow(69.0f,  "Drums",   state.currentLoop.tracks[0].volume, Colors::TRACK_COLORS[0]);
-    drawSliderRow(86.0f,  "Bass",    state.currentLoop.tracks[1].volume, Colors::TRACK_COLORS[1]);
-    drawSliderRow(103.0f, "Melody",  state.currentLoop.tracks[2].volume, Colors::TRACK_COLORS[2]);
-    drawSliderRow(120.0f, "Harmony", state.currentLoop.tracks[3].volume, Colors::TRACK_COLORS[3]);
+    drawSliderRow(69.0f,  state.currentLoop.tracks[0].muted ? "[M]Drum" : "Drums",   state.currentLoop.tracks[0].volume, Colors::TRACK_COLORS[0], state.currentLoop.tracks[0].muted != 0);
+    drawSliderRow(86.0f,  state.currentLoop.tracks[1].muted ? "[M]Bass" : "Bass",    state.currentLoop.tracks[1].volume, Colors::TRACK_COLORS[1], state.currentLoop.tracks[1].muted != 0);
+    drawSliderRow(103.0f, state.currentLoop.tracks[2].muted ? "[M]Melo" : "Melody",  state.currentLoop.tracks[2].volume, Colors::TRACK_COLORS[2], state.currentLoop.tracks[2].muted != 0);
+    drawSliderRow(120.0f, state.currentLoop.tracks[3].muted ? "[M]Harm" : "Harmony", state.currentLoop.tracks[3].volume, Colors::TRACK_COLORS[3], state.currentLoop.tracks[3].muted != 0);
+    bool vocMuted = (state.activeView == VIEW_SONG) ? (state.currentSong.songVocalMuted != 0) : (state.currentLoop.vocalMuted != 0);
     uint8_t vocVol = (state.activeView == VIEW_SONG) ? state.currentSong.songVocalVolume : state.currentLoop.vocalVolume;
-    drawSliderRow(137.0f, "Vocal",   vocVol, Colors::PURPLE_SPELL);
-    drawSliderRow(154.0f, "Reverb",  state.currentLoop.reverbMix, Colors::BLUE_ACTION);
+    drawSliderRow(137.0f, vocMuted ? "[M]Voc" : "Vocal", vocVol, Colors::PURPLE_SPELL, vocMuted);
+    drawSliderRow(154.0f, "Reverb", state.currentLoop.reverbMix, Colors::BLUE_ACTION);
 
-    Rect btnHpf   = {  6.0f, 175.0f, 96.0f, 26.0f };
-    Rect btnMidi  = {106.0f, 175.0f, 114.0f, 26.0f };
-    Rect btnClose = {224.0f, 175.0f, 90.0f, 26.0f };
+    Rect btnKey   = {  6.0f, 175.0f, 58.0f, 26.0f };
+    Rect btnMetro = { 67.0f, 175.0f, 60.0f, 26.0f };
+    Rect btnHpf   = {130.0f, 175.0f, 58.0f, 26.0f };
+    Rect btnMidi  = {191.0f, 175.0f, 62.0f, 26.0f };
+    Rect btnClose = {256.0f, 175.0f, 58.0f, 26.0f };
 
+    char keyLbl[16];
+    std::snprintf(keyLbl, sizeof(keyLbl), "KEY:%s", getRootNoteName(state.currentLoop.rootNote));
+    uiDrawButton(btnKey, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, keyLbl, 0.34f);
+    uiDrawButton(btnMetro,
+                 state.metronomeEnabled ? Colors::AMBER_JAM : Colors::BG_CARD,
+                 Colors::BORDER_WOOD, Colors::CREAM_TEXT,
+                 state.metronomeEnabled ? "MET:ON" : "MET:OF", 0.33f);
     uiDrawButton(btnHpf,
                  state.currentLoop.vocalHighPass ? Colors::BLUE_ACTION : Colors::BG_CARD,
                  Colors::BORDER_WOOD, Colors::CREAM_TEXT,
-                 state.currentLoop.vocalHighPass ? "HPF: ON" : "HPF: OFF", 0.36f);
+                 state.currentLoop.vocalHighPass ? "HPF:ON" : "HPF:OF", 0.33f);
     uiDrawButton(btnMidi,
                  state.wifiMidiEnabled ? Colors::GREEN_PLAY : Colors::BG_CARD,
                  Colors::BORDER_WOOD, Colors::CREAM_TEXT,
-                 state.wifiMidiEnabled ? "MIDI: ON" : "MIDI: OFF", 0.36f);
-    uiDrawButton(btnClose, Colors::BG_CARD_ALT, Colors::GOLD_TEXT, Colors::GOLD_TEXT, "DONE", 0.38f);
+                 state.wifiMidiEnabled ? "MID:ON" : "MID:OF", 0.33f);
+    uiDrawButton(btnClose, Colors::BG_CARD_ALT, Colors::GOLD_TEXT, Colors::GOLD_TEXT, "DONE", 0.36f);
 }
 
 bool uiHandleMixDrawerTouch(AppState& state, float tx, float ty, bool isJustPressed, bool isHeld) {
     if (!state.showMixDrawer) return false;
+
+    if (isJustPressed && tx < 70.0f && ty >= 69.0f && ty < 154.0f) {
+        int row = static_cast<int>((ty - 69.0f) / 17.0f);
+        if (row >= 0 && row < 4) {
+            state.currentLoop.tracks[row].muted = state.currentLoop.tracks[row].muted ? 0 : 1;
+            state.syncAudioLoop();
+        } else if (row == 4) {
+            state.toggleVocalMute(state.activeView == VIEW_SONG);
+        }
+        return true;
+    }
 
     if ((isJustPressed || isHeld) && tx >= 70.0f && tx <= 284.0f && ty >= 69.0f && ty < 171.0f) {
         int pct = static_cast<int>(((tx - 74.0f) / 204.0f) * 100.0f);
@@ -367,11 +413,17 @@ bool uiHandleMixDrawerTouch(AppState& state, float tx, float ty, bool isJustPres
     }
 
     if (isJustPressed && ty >= 175.0f && ty <= 202.0f) {
-        Rect btnHpf   = {  6.0f, 175.0f, 96.0f, 26.0f };
-        Rect btnMidi  = {106.0f, 175.0f, 114.0f, 26.0f };
-        Rect btnClose = {224.0f, 175.0f, 90.0f, 26.0f };
+        Rect btnKey   = {  6.0f, 175.0f, 58.0f, 26.0f };
+        Rect btnMetro = { 67.0f, 175.0f, 60.0f, 26.0f };
+        Rect btnHpf   = {130.0f, 175.0f, 58.0f, 26.0f };
+        Rect btnMidi  = {191.0f, 175.0f, 62.0f, 26.0f };
+        Rect btnClose = {256.0f, 175.0f, 58.0f, 26.0f };
 
-        if (btnHpf.contains(tx, ty)) {
+        if (btnKey.contains(tx, ty)) {
+            state.cycleRootKey();
+        } else if (btnMetro.contains(tx, ty)) {
+            state.toggleMetronome();
+        } else if (btnHpf.contains(tx, ty)) {
             state.toggleVocalHighPass();
         } else if (btnMidi.contains(tx, ty)) {
             state.toggleWifiMidi();

@@ -64,10 +64,22 @@ struct AppState {
     int      lastLiveDegree = -1;
     int      liveFlashFrames = 0;
 
-    // Spellbook saved loops cache & Quantized Cue (#5)
+    // Spellbook saved loops cache & Quantized Cue (#5, #11)
     std::vector<LoopSummary> savedLoops;
     int      spellbookPage = 0;
     bool     spellbookQuantizedCue = false; // false = Instant, true = Next Bar
+    bool     hasQueuedSpellbookLoop = false;
+    LoopFile queuedSpellbookLoop;
+
+    // Performance mode, live sustain recording, metronome, dice (#12, #13, #14, #15)
+    int      perfMode = 0; // 0 = NOTE, 1 = CHORD, 2 = ARP
+    int      arpHeldDegree = -1;
+    int      lastArpStep = -1;
+    int      arpCycleIdx = 0;
+    int      recHeldStep = -1;
+    uint8_t  recHeldNote = 0;
+    bool     metronomeEnabled = false;
+    uint32_t diceSeed = 0x13572468u;
 
     // Status toast banner
     char     toastMsg[64] = {0};
@@ -93,7 +105,12 @@ struct AppState {
     void cueLoopFromSpellbook(uint16_t loopId);
     void syncAudioLoop();
     void toggleLoopBars();
+    void cycleLoopBarsAndPage();
     void cycleSwing();
+    void cycleRootKey();
+    void rollBardicDice();
+    void toggleMetronome();
+    void cyclePerfMode();
     void exportCurrentLoopWav();
 
     // Song operations
@@ -106,10 +123,12 @@ struct AppState {
     void addCurrentLoopToSong();
     void copyAndTweakSongSlot(int slotIdx);
     void editSongSlotLoop(int slotIdx);
+    void cycleSongSlotLoop(int slotIdx, int dir);
     void returnToSongFromEdit();
     void deleteSongSlot(int slotIdx);
     void exportCurrentSongWav();
     int  getTotalSongBars() const;
+    int  getLoopNumBarsById(uint16_t loopId) const;
     const char* getLoopNameById(uint16_t loopId) const;
 
     // Vocal & Mix operations

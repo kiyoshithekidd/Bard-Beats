@@ -42,4 +42,8 @@ int   audioEngineGetCurrentStep();
 float audioEngineGetStepFraction();
 float audioEngineGetPeakLevel();
 
+// Metronome click toggle (v0.3.0)
+void  audioEngineSetMetronome(bool enabled);
+bool  audioEngineGetMetronome();
+
 } // namespace BardBeats

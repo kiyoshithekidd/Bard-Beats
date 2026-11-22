@@ -172,4 +172,9 @@ bool stepHasNote(const StepCell& cell, uint8_t midiNote);
 bool stepHasAnyNote(const StepCell& cell);
 void clearStepCell(StepCell& cell);
 
+// Root key & Bardic Dice helpers (v0.3.0)
+const char* getRootNoteName(uint8_t rootNote);
+void transposeLoopRoot(LoopFile& loop, int semitoneDelta);
+void generateBardicDiceTrack(LoopFile& loop, int trackIdx, uint32_t& rngSeed);
+
 } // namespace BardBeats

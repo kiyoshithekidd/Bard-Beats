@@ -41,7 +41,9 @@ void viewSongDrawTop(const AppState& state) {
     for (int i = 0; i < state.currentSong.numEntries; ++i) {
         const SongChainEntry& e = state.currentSong.chain[i];
         int reps = (e.repeatCount > 0 ? e.repeatCount : 1);
-        float segW = timelineW * (static_cast<float>(reps) / static_cast<float>(totalBars));
+        int loopBars = state.getLoopNumBarsById(e.loopId);
+        int entryBars = reps * loopBars;
+        float segW = timelineW * (static_cast<float>(entryBars) / static_cast<float>(totalBars));
         if (segW < 10.0f) segW = 10.0f;
 
         uint32_t col = SECTION_COLORS[static_cast<int>(e.sectionTag) % 6];
@@ -68,7 +70,7 @@ void viewSongDrawTop(const AppState& state) {
 
         if (isPlayingSlot) {
             float barFrac = (static_cast<float>(playRep) +
-                             static_cast<float>(audioEngineGetCurrentStep()) / 16.0f) /
+                             static_cast<float>(audioEngineGetCurrentStep()) / static_cast<float>(loopBars * 16)) /
                             static_cast<float>(reps);
             float px = sr.x + sr.w * barFrac;
             C2D_DrawRectSolid(px, sr.y, 0.4f, 2.5f, sr.h, Colors::PLAYHEAD_LINE);
@@ -193,16 +195,20 @@ void viewSongDrawBottom(const AppState& state) {
         std::snprintf(header, sizeof(header), "Slot %d/%d: [%s] x%d",
                       state.selectedSongSlot + 1, state.currentSong.numEntries,
                       getSectionTagName(e.sectionTag), e.repeatCount);
-        uiDrawText(cardRect.x + 8.0f, cardRect.y + 6.0f, 0.42f, 0.42f, Colors::GOLD_TEXT, header);
+        uiDrawText(cardRect.x + 8.0f, cardRect.y + 4.0f, 0.38f, 0.38f, Colors::GOLD_TEXT, header);
 
         char loopLbl[48];
         std::snprintf(loopLbl, sizeof(loopLbl), "Loop: %s", state.getLoopNameById(e.loopId));
-        uiDrawText(cardRect.x + 8.0f, cardRect.y + 26.0f, 0.40f, 0.40f, Colors::CREAM_TEXT, loopLbl);
+        uiDrawText(cardRect.x + 8.0f, cardRect.y + 18.0f, 0.35f, 0.35f, Colors::CREAM_TEXT, loopLbl);
 
-        Rect btnRepDn = { cardRect.x + 150.0f, cardRect.y + 30.0f, 34.0f, 22.0f };
-        Rect btnRepUp = { cardRect.x + 188.0f, cardRect.y + 30.0f, 34.0f, 22.0f };
-        uiDrawButton(btnRepDn, Colors::BG_DARK, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-x", 0.36f);
-        uiDrawButton(btnRepUp, Colors::BG_DARK, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+x", 0.36f);
+        Rect btnLpDn  = { cardRect.x +   8.0f, cardRect.y + 34.0f, 44.0f, 20.0f };
+        Rect btnLpUp  = { cardRect.x +  56.0f, cardRect.y + 34.0f, 44.0f, 20.0f };
+        Rect btnRepDn = { cardRect.x + 150.0f, cardRect.y + 34.0f, 34.0f, 20.0f };
+        Rect btnRepUp = { cardRect.x + 188.0f, cardRect.y + 34.0f, 34.0f, 20.0f };
+        uiDrawButton(btnLpDn,  Colors::BG_DARK, Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "<LP", 0.32f);
+        uiDrawButton(btnLpUp,  Colors::BG_DARK, Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "LP>", 0.32f);
+        uiDrawButton(btnRepDn, Colors::BG_DARK, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-x",  0.34f);
+        uiDrawButton(btnRepUp, Colors::BG_DARK, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+x",  0.34f);
     } else {
         uiDrawButton(cardRect, Colors::BG_PANEL, Colors::BORDER_WOOD, Colors::MUTED_TEXT,
                      "No clips yet - Tap +ADD", 0.40f);
@@ -301,8 +307,10 @@ void viewSongHandleTouch(AppState& state, float tx, float ty, bool isJustPressed
     Rect btnPrevSlot = {  4.0f, 98.0f, 36.0f, 58.0f };
     Rect cardRect    = { 44.0f, 98.0f, 232.0f, 58.0f };
     Rect btnNextSlot = {280.0f, 98.0f, 36.0f, 58.0f };
-    Rect btnRepDn    = { cardRect.x + 150.0f, cardRect.y + 30.0f, 34.0f, 22.0f };
-    Rect btnRepUp    = { cardRect.x + 188.0f, cardRect.y + 30.0f, 34.0f, 22.0f };
+    Rect btnLpDn     = { cardRect.x +   8.0f, cardRect.y + 34.0f, 44.0f, 20.0f };
+    Rect btnLpUp     = { cardRect.x +  56.0f, cardRect.y + 34.0f, 44.0f, 20.0f };
+    Rect btnRepDn    = { cardRect.x + 150.0f, cardRect.y + 34.0f, 34.0f, 20.0f };
+    Rect btnRepUp    = { cardRect.x + 188.0f, cardRect.y + 34.0f, 34.0f, 20.0f };
 
     if (btnPrevSlot.contains(tx, ty) && state.selectedSongSlot > 0) {
         state.selectedSongSlot--;
@@ -314,6 +322,14 @@ void viewSongHandleTouch(AppState& state, float tx, float ty, bool isJustPressed
     }
     if (state.currentSong.numEntries > 0 && state.selectedSongSlot < state.currentSong.numEntries) {
         SongChainEntry& e = state.currentSong.chain[state.selectedSongSlot];
+        if (btnLpDn.contains(tx, ty)) {
+            state.cycleSongSlotLoop(state.selectedSongSlot, -1);
+            return;
+        }
+        if (btnLpUp.contains(tx, ty)) {
+            state.cycleSongSlotLoop(state.selectedSongSlot, 1);
+            return;
+        }
         if (btnRepDn.contains(tx, ty)) {
             if (e.repeatCount > 1) e.repeatCount--;
             state.syncSongToAudio();
