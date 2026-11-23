@@ -495,7 +495,7 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
             float tChiff = 1.0f - static_cast<float>(v.ageSamples) * (1.0f / 900.0f);
             chiff = (v.lpfState - v.lpfState2) * (0.07f * tChiff);
         }
-        raw = (f1 + f2 + f3) * 0.58f + chiff;
+        raw = (f1 + f2 + f3) * 0.80f + chiff;
     } else if (v.instrumentId == INST_WOOD_FLUTE) {
         // Airy Medieval Wooden Flute: polyphonic-friendly gain + gentle 2nd/3rd harmonics + soft breath chiff
         v.phase2 += 5.4f * (1.0f / BB_SAMPLE_RATE);
@@ -511,7 +511,7 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
         v.lpfState  += 0.24f * (n - v.lpfState);
         v.lpfState2 += 0.10f * (v.lpfState - v.lpfState2);
         float breathAmt = (v.ageSamples < 1400) ? (0.09f * (1.0f - static_cast<float>(v.ageSamples) * (1.0f / 1400.0f))) : 0.012f;
-        raw = tone * 0.54f + (v.lpfState - v.lpfState2) * breathAmt;
+        raw = tone * 0.80f + (v.lpfState - v.lpfState2) * breathAmt;
     } else if (v.instrumentId == INST_PULSE_LEAD) {
         float dt1 = v.phaseInc * pitchMult;
         float dt2 = dt1 * 1.0035f;
@@ -532,7 +532,7 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
         v.filterEnv *= v.filterDecay;
         v.lpfState  += cutoff * (osc - v.lpfState);
         v.lpfState2 += cutoff * (v.lpfState - v.lpfState2);
-        raw = v.lpfState2 * 0.78f;
+        raw = v.lpfState2 * 0.85f;
     } else if (v.instrumentId == INST_SYNTH_BRASS) {
         // Modern detuned dual-saw Synth Brass with warm filter swell
         float dt1 = v.phaseInc * pitchMult;
@@ -545,14 +545,14 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
         float cutoff = 0.12f + 0.42f * v.envLevel;
         v.lpfState  += cutoff * (osc - v.lpfState);
         v.lpfState2 += cutoff * (v.lpfState - v.lpfState2);
-        raw = v.lpfState2 * 0.65f;
+        raw = v.lpfState2 * 0.85f;
     } else if (v.instrumentId == INST_ELEC_BASS) {
         // Punchy modern fingered/picked Electric Bass
         float dt = v.phaseInc * pitchMult;
         v.phase += dt; if (v.phase >= 1.0f) v.phase -= static_cast<float>(static_cast<int>(v.phase));
         float f = fastSin(v.phase) + 0.45f * fastSin(v.phase * 2.0f) + 0.20f * v.filterEnv * fastSin(v.phase * 3.0f);
         v.filterEnv *= v.filterDecay;
-        raw = fastSoftClip(f * 0.85f) * 0.75f;
+        raw = fastSoftClip(f * 0.85f) * 0.90f;
     } else if (v.instrumentId == INST_ELEC_GUITAR) {
         // Clean/warm Electric Guitar with harmonic pluck & gentle amp warmth
         float dt = v.phaseInc * pitchMult;
@@ -563,7 +563,7 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
                   + (0.48f * h + 0.14f) * fastSin(v.phase * 2.0f)
                   + (0.30f * h) * fastSin(v.phase * 3.0f)
                   + (0.16f * h) * fastSin(v.phase * 4.0f);
-        raw = fastSoftClip(str * 0.75f) * 0.62f;
+        raw = fastSoftClip(str * 0.75f) * 0.84f;
     } else if (v.instrumentId == INST_TAVERN_PIANO) {
         // Acoustic Upright Piano: hammer transient + warm decaying upper partials
         float dt = v.phaseInc * pitchMult;
@@ -574,7 +574,7 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
                    + (0.38f * h + 0.08f) * fastSin(v.phase * 2.0f)
                    + (0.22f * h) * fastSin(v.phase * 3.0f)
                    + (0.12f * h * h) * fastSin(v.phase * 4.0f);
-        raw = body * 0.58f;
+        raw = body * 0.84f;
     } else if (v.instrumentId == INST_ELEC_KEYS) {
         // Warm Rhodes-style Electric Piano: fundamental + bell tine on attack
         float dt = v.phaseInc * pitchMult;
@@ -583,7 +583,7 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
         v.filterEnv *= v.filterDecay;
         float tine = 0.22f * h * h * fastSin(v.phase * 7.0f);
         float body = fastSin(v.phase) + 0.18f * h * fastSin(v.phase * 2.0f) + tine;
-        raw = body * 0.62f;
+        raw = body * 0.84f;
     } else {
         float dt = v.phaseInc * pitchMult;
         v.phase += dt;
@@ -637,7 +637,7 @@ void SynthVoices::render(int16_t* outStereo, int numSamples, float liveBendSemis
                 renderVoiceSample(v, livePitchMult);
                 continue;
             }
-            float vol = static_cast<float>(trackVolumes[v.trackIdx]) * 0.01f;
+            float vol = static_cast<float>(std::min<uint8_t>(trackVolumes[v.trackIdx], 200)) * 0.01f;
             float smp = renderVoiceSample(v, livePitchMult) * vol;
             dryL  += smp * PAN_L[v.trackIdx];
             dryR  += smp * PAN_R[v.trackIdx];
@@ -647,7 +647,7 @@ void SynthVoices::render(int16_t* outStereo, int numSamples, float liveBendSemis
         float wetL = 0.0f, wetR = 0.0f;
         reverb_.process(revIn, wetL, wetR);
 
-        constexpr float MASTER_GAIN = 1.45f;
+        constexpr float MASTER_GAIN = 2.15f;
         float mixL = fastSoftClip((dryL + wetL * reverbMix) * MASTER_GAIN);
         float mixR = fastSoftClip((dryR + wetR * reverbMix) * MASTER_GAIN);
 

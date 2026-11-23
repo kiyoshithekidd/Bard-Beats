@@ -323,28 +323,34 @@ bool uiHandleBottomChromeTouch(AppState& state, float tx, float ty) {
 
 // ---- Mix & Settings Drawer (#4 & #6) ----
 
-static void drawSliderRow(float y, const char* label, uint8_t value, uint32_t fillCol, bool muted = false) {
+static void drawSliderRow(float y, const char* label, uint8_t value, uint32_t fillCol, bool muted = false, uint8_t maxVal = 100) {
     uiDrawText(8.0f, y + 1.0f, 0.38f, 0.38f, muted ? Colors::RED_REC : Colors::CREAM_TEXT, label);
-    Rect bar = { 76.0f, y + 2.0f, 202.0f, 14.0f };
+    Rect bar = { 76.0f, y + 2.0f, 196.0f, 14.0f };
     C2D_DrawRectSolid(bar.x, bar.y, 0.1f, bar.w, bar.h, Colors::BG_DARK);
-    float w = (static_cast<float>(value) / 100.0f) * bar.w;
-    C2D_DrawRectSolid(bar.x, bar.y, 0.15f, w, bar.h, muted ? Colors::MUTED_TEXT : fillCol);
-    char valBuf[8];
-    std::snprintf(valBuf, sizeof(valBuf), "%u", value);
-    uiDrawText(284.0f, y + 1.0f, 0.38f, 0.38f, Colors::GOLD_TEXT, valBuf);
+    uint8_t clamped = (value > maxVal) ? maxVal : value;
+    float w = (static_cast<float>(clamped) / static_cast<float>(maxVal)) * bar.w;
+    uint32_t barCol = muted ? Colors::MUTED_TEXT : ((maxVal > 100 && clamped > 100) ? Colors::GOLD_TEXT : fillCol);
+    C2D_DrawRectSolid(bar.x, bar.y, 0.15f, w, bar.h, barCol);
+    if (maxVal > 100) {
+        // 100% unity gain reference tick at midpoint
+        C2D_DrawRectSolid(bar.x + bar.w * 0.5f, bar.y, 0.2f, 1.5f, bar.h, Colors::CREAM_TEXT);
+    }
+    char valBuf[12];
+    std::snprintf(valBuf, sizeof(valBuf), "%u%%", clamped);
+    uiDrawText(276.0f, y + 1.0f, 0.38f, 0.38f, (maxVal > 100 && clamped > 100) ? Colors::GOLD_TEXT : Colors::CREAM_TEXT, valBuf);
 }
 
 void uiDrawMixDrawer(const AppState& state) {
     C2D_DrawRectSolid(2.0f, 67.0f, 0.08f, 316.0f, 137.0f, Colors::BG_PANEL);
 
-    drawSliderRow(69.0f,  state.currentLoop.tracks[0].muted ? "[M]Drm" : "Drums",   state.currentLoop.tracks[0].volume, Colors::TRACK_COLORS[0], state.currentLoop.tracks[0].muted != 0);
-    drawSliderRow(86.0f,  state.currentLoop.tracks[1].muted ? "[M]Bas" : "Bass",    state.currentLoop.tracks[1].volume, Colors::TRACK_COLORS[1], state.currentLoop.tracks[1].muted != 0);
-    drawSliderRow(103.0f, state.currentLoop.tracks[2].muted ? "[M]Mel" : "Melody",  state.currentLoop.tracks[2].volume, Colors::TRACK_COLORS[2], state.currentLoop.tracks[2].muted != 0);
-    drawSliderRow(120.0f, state.currentLoop.tracks[3].muted ? "[M]Hrm" : "Harmony", state.currentLoop.tracks[3].volume, Colors::TRACK_COLORS[3], state.currentLoop.tracks[3].muted != 0);
+    drawSliderRow(69.0f,  state.currentLoop.tracks[0].muted ? "[M]Drm" : "Drums",   state.currentLoop.tracks[0].volume, Colors::TRACK_COLORS[0], state.currentLoop.tracks[0].muted != 0, 200);
+    drawSliderRow(86.0f,  state.currentLoop.tracks[1].muted ? "[M]Bas" : "Bass",    state.currentLoop.tracks[1].volume, Colors::TRACK_COLORS[1], state.currentLoop.tracks[1].muted != 0, 200);
+    drawSliderRow(103.0f, state.currentLoop.tracks[2].muted ? "[M]Mel" : "Melody",  state.currentLoop.tracks[2].volume, Colors::TRACK_COLORS[2], state.currentLoop.tracks[2].muted != 0, 200);
+    drawSliderRow(120.0f, state.currentLoop.tracks[3].muted ? "[M]Hrm" : "Harmony", state.currentLoop.tracks[3].volume, Colors::TRACK_COLORS[3], state.currentLoop.tracks[3].muted != 0, 200);
     bool vocMuted = (state.activeView == VIEW_SONG) ? (state.currentSong.songVocalMuted != 0) : (state.currentLoop.vocalMuted != 0);
     uint8_t vocVol = (state.activeView == VIEW_SONG) ? state.currentSong.songVocalVolume : state.currentLoop.vocalVolume;
-    drawSliderRow(137.0f, vocMuted ? "[M]Voc" : "Vocal", vocVol, Colors::PURPLE_SPELL, vocMuted);
-    drawSliderRow(154.0f, "Reverb", state.currentLoop.reverbMix, Colors::BLUE_ACTION);
+    drawSliderRow(137.0f, vocMuted ? "[M]Voc" : "Vocal", vocVol, Colors::PURPLE_SPELL, vocMuted, 100);
+    drawSliderRow(154.0f, "Reverb", state.currentLoop.reverbMix, Colors::BLUE_ACTION, false, 100);
 
     Rect btnKey   = {  6.0f, 175.0f, 66.0f, 26.0f };
     Rect btnMetro = { 75.0f, 175.0f, 54.0f, 26.0f };
@@ -385,17 +391,18 @@ bool uiHandleMixDrawerTouch(AppState& state, float tx, float ty, bool isJustPres
         return true;
     }
 
-    if ((isJustPressed || isHeld) && tx >= 70.0f && tx <= 284.0f && ty >= 69.0f && ty < 171.0f) {
-        int pct = static_cast<int>(((tx - 74.0f) / 204.0f) * 100.0f);
-        if (pct < 0) pct = 0;
-        if (pct > 100) pct = 100;
-        uint8_t val = static_cast<uint8_t>(pct);
+    if ((isJustPressed || isHeld) && tx >= 70.0f && tx <= 278.0f && ty >= 69.0f && ty < 171.0f) {
+        float norm = (tx - 76.0f) / 196.0f;
+        if (norm < 0.0f) norm = 0.0f;
+        if (norm > 1.0f) norm = 1.0f;
 
         int row = static_cast<int>((ty - 69.0f) / 17.0f);
         if (row >= 0 && row < 4) {
-            state.currentLoop.tracks[row].volume = val;
+            int pct = static_cast<int>(norm * 200.0f);
+            state.currentLoop.tracks[row].volume = static_cast<uint8_t>(pct);
             state.syncAudioLoop();
         } else if (row == 4) {
+            uint8_t val = static_cast<uint8_t>(norm * 100.0f);
             if (state.activeView == VIEW_SONG) {
                 state.currentSong.songVocalVolume = val;
                 audioEngineSetVocalMix(val, state.currentSong.songVocalMuted != 0);
@@ -404,7 +411,7 @@ bool uiHandleMixDrawerTouch(AppState& state, float tx, float ty, bool isJustPres
                 audioEngineSetVocalMix(val, state.currentLoop.vocalMuted != 0);
             }
         } else if (row == 5) {
-            state.currentLoop.reverbMix = val;
+            state.currentLoop.reverbMix = static_cast<uint8_t>(norm * 100.0f);
             state.syncAudioLoop();
         }
         return true;
