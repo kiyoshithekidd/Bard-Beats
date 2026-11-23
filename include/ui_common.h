@@ -64,4 +64,8 @@ bool uiHandleBottomChromeTouch(AppState& state, float tx, float ty);
 void uiDrawMixDrawer(const AppState& state);
 bool uiHandleMixDrawerTouch(AppState& state, float tx, float ty, bool isJustPressed, bool isHeld);
 
+// Instrument Picker Drawer (y: 66..206) (#20)
+void uiDrawInstPicker(const AppState& state);
+bool uiHandleInstPickerTouch(AppState& state, float tx, float ty);
+
 } // namespace BardBeats

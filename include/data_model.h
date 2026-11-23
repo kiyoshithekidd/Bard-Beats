@@ -19,15 +19,23 @@ enum TrackRole : uint8_t {
 };
 
 enum InstrumentId : uint8_t {
-    INST_TAVERN_KIT = 0, // Bodhran kick, woodblock/clap snare, tambourine, shaker
-    INST_CHIP_KIT   = 1, // 8-bit triangle kick, LFSR noise snare, chip hi-hats
-    INST_UPRIGHT_BASS = 2, // Acoustic plucked double bass
-    INST_SUB_BASS     = 3, // Resonant saw/sub synth bass
-    INST_OCARINA      = 4, // Sweet clay vessel flute (built for Circle Pad pitch bend)
-    INST_PULSE_LEAD   = 5, // Classic chiptune PolyBLEP pulse lead
-    INST_LUTE         = 6, // Plucked bard's lute
-    INST_HARP         = 7, // Celtic minstrel harp
-    INST_COUNT        = 8
+    INST_TAVERN_KIT   = 0,  // Bodhran kick, woodblock/clap snare, tambourine, shaker
+    INST_CHIP_KIT     = 1,  // 8-bit triangle kick, LFSR noise snare, chip hi-hats
+    INST_UPRIGHT_BASS = 2,  // Acoustic plucked double bass
+    INST_SUB_BASS     = 3,  // Resonant saw/sub synth bass
+    INST_OCARINA      = 4,  // Sweet clay vessel flute (clean monophonic/legato)
+    INST_PULSE_LEAD   = 5,  // Classic chiptune PolyBLEP pulse lead
+    INST_LUTE         = 6,  // Plucked bard's lute
+    INST_HARP         = 7,  // Celtic minstrel harp
+    INST_WAR_KIT      = 8,  // Heavy war-drum, anvil snare, deep tom
+    INST_LOFI_KIT     = 9,  // Modern punchy kick, crisp clap/snare, tight hats
+    INST_ELEC_BASS    = 10, // Punchy modern electric bass
+    INST_WOOD_FLUTE   = 11, // Airy medieval wooden flute (polyphonic-friendly)
+    INST_SYNTH_BRASS  = 12, // Modern detuned synth brass lead
+    INST_ELEC_GUITAR  = 13, // Clean/warm modern electric guitar
+    INST_TAVERN_PIANO = 14, // Acoustic upright tavern piano
+    INST_ELEC_KEYS    = 15, // Warm modern electric piano keys
+    INST_COUNT        = 16
 };
 
 enum ScaleId : uint8_t {

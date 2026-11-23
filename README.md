@@ -4,7 +4,7 @@ A standalone loop maker for the Nintendo 3DS. A step sequencer and MIDI synth th
 
 ## What it does
 
-- **Step sequencer**: 1-bar (16-step) or 2-bar (32-step) loops (`1B:16` -> `2B:P1` -> `2B:P2`) with horizontal drag-sustain note lengths, adjustable Swing (`50%`, `58%`, `64%`), 4 tracks (Drums, Bass, Melody, Harmony) with one-tap `[M]` mute, **Bardic Dice** pattern generator (`DICE`), and 8 launch instruments (*Tavern Kit*, *8-Bit Kit*, *Upright Bass*, *Dungeon Sub*, *Ocarina*, *Chip Lead*, *Bard's Lute*, *Minstrel Harp*).
+- **Step sequencer**: 1-bar (16-step) or 2-bar (32-step) loops (`1B` -> `2B:1` -> `2B:2`) with horizontal drag-sustain note lengths, adjustable Swing (`50%`, `58%`, `64%`), 4 tracks (Drums, Bass, Melody, Harmony) with one-tap `[M]` mute, **Bardic Dice** pattern generator (`DICE`), and **16 fantasy + modern instruments** (*Tavern Kit*, *8-Bit Kit*, *War Drum Kit*, *Modern Kit*, *Upright Bass*, *Dungeon Sub*, *Electric Bass*, *Clay Ocarina*, *Wooden Flute*, *Chip Lead*, *Synth Brass*, *Bard's Lute*, *Minstrel Harp*, *Elec Guitar*, *Tavern Piano*, *Elec Keys*). Tap the active track tab to open the **Instrument Picker** and layer any melodic instrument on Tracks 1-3!
 - **Live play**: Play on the 3DS itself across Grid, 4x2 Sound Pads, and Rendered Instrument views (with top-screen Stereoscopic 3D and live VU pulse meter). Switch between **NOTE**, **CHORD** (one-tap scale triads), and **ARP** (stepped arpeggiator) modes. Buttons (`A/B/X/Y/D-Pad`) play notes, `L/R` shifts octave, and the Circle Pad bends pitch ($\pm 2$ semitones on X) and adds vibrato (on Y), ocarina-style.
 - **Jam and record**: The loop plays while you jam along (`JAM`), and tapping `REC` quantizes your live notes (including held sustain lengths) onto the grid. `UNDO` reverts your last pass without stopping playback.
 - **Saved loops (Spellbook)**: Ships with 8 starter bard spells (*Tavern Bounce*, *Fireball Cue*, *Healing Hymn*, *Goblin March*, *Bardic Ballad*, *Shield Ward*, *Shadow Step*, *Victory Fanfare*). Loops save to `sdmc:/3ds/BardBeats/loops/*.bbloop` with Instant (`Q:NOW`) or Next-Bar (`Q:BAR`) cue playback, plus Standard MIDI (`.mid`) and Offline Stereo WAV (`.wav`) export.
@@ -14,8 +14,8 @@ A standalone loop maker for the Nintendo 3DS. A step sequencer and MIDI synth th
 
 ## Status
 
-- **v0.3.0 (Complete & Building on `main`)**: Fixes Track Mute (`#7`), 2-Bar Grid Cycling (`#8`), 2-Bar Song Timeline (`#9`), Song Slot Loop Cycler (`#10`), and Quantized Cue Sync (`#11`), and adds Chord/Arp Mode (`#12`), Sustained Note Lengths (`#13`), Woodblock Metronome (`#14`), Bardic Dice (`#15`), Root Key Transpose (`#16`), and Live VU Pulse Meter (`#17`).
-- **v0.2.0 - v0.2.3**: Implemented Offline WAV Bounce, Multiple Songs Shelf, Swing & 2-Bar (32-step) Loops, Live Mix Drawer, Spellbook Quantized Cue & Stereoscopic 3D, OpenDSP zero-setup audio, 8 starter bard spells, 3 sample songs, custom upright bass sprite, and 3D HOME banner/audio polish.
+- **v0.4.0 (Complete & Building on `main`)**: Raises minimum UI text scale to `0.38f` across all views (`#18`), fixes Ocarina live-drag voice pileup and static clipping (`#19`), and expands the instrument library to 16 fantasy + modern instruments (including *Wooden Flute*, *Tavern Piano*, *Electric Guitar*, *Electric Bass*, *Synth Brass*, *War Drum Kit*, *Modern Kit*, and *Electric Keys*) with a visual Instrument Picker and cross-track layering (`#20`).
+- **v0.3.0**: Fixed Track Mute (`#7`), 2-Bar Grid Cycling (`#8`), 2-Bar Song Timeline (`#9`), Song Slot Loop Cycler (`#10`), and Quantized Cue Sync (`#11`), and added Chord/Arp Mode (`#12`), Sustained Note Lengths (`#13`), Woodblock Metronome (`#14`), Bardic Dice (`#15`), Root Key Transpose (`#16`), and Live VU Pulse Meter (`#17`).
 
 See [PRD.md](PRD.md), [PERSONAS.md](PERSONAS.md), and [ARCHITECTURE.md](ARCHITECTURE.md) for the full spec and technical plan.
 

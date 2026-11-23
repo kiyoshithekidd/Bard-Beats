@@ -19,7 +19,7 @@ static bool s_paintAddMode = true;
 void viewGridDrawTop(const AppState& state) {
     uiDrawTopHeader(state);
     uiDrawTopFourTrackOverview(state, 40.0f, 166.0f);
-    uiDrawText(10.0f, 212.0f, 0.36f, 0.36f, Colors::MUTED_TEXT,
+    uiDrawText(10.0f, 212.0f, 0.38f, 0.38f, Colors::MUTED_TEXT,
                "Tap/Drag Grid (Drag right=Sustain) | A/B/X/Y/D-Pad play live");
 }
 
@@ -39,32 +39,32 @@ void viewGridDrawBottom(const AppState& state) {
     Rect btnMix    = {249.0f, 67.0f, 34.0f, 20.0f };
     Rect btnClear  = {285.0f, 67.0f, 32.0f, 20.0f };
 
-    uiDrawButton(btnBpmDn, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-BPM", 0.30f);
-    uiDrawButton(btnBpmUp, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+BPM", 0.30f);
+    uiDrawButton(btnBpmDn, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-BM", 0.38f);
+    uiDrawButton(btnBpmUp, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+BM", 0.38f);
 
     char scaleBuf[20];
     std::snprintf(scaleBuf, sizeof(scaleBuf), "%s", getScaleName(state.currentLoop.scaleId));
-    uiDrawButton(btnScale, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, scaleBuf, 0.30f);
+    uiDrawButton(btnScale, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, scaleBuf, 0.38f);
 
     char barBuf[16];
     if (state.currentLoop.numBars == 2) {
-        std::snprintf(barBuf, sizeof(barBuf), "2B:P%d", state.gridBarPage + 1);
+        std::snprintf(barBuf, sizeof(barBuf), "2B:%d", state.gridBarPage + 1);
     } else {
-        std::snprintf(barBuf, sizeof(barBuf), "1B:16");
+        std::snprintf(barBuf, sizeof(barBuf), "1B");
     }
     uiDrawButton(btnBars, state.currentLoop.numBars == 2 ? Colors::BLUE_ACTION : Colors::BG_CARD,
-                 Colors::BORDER_WOOD, Colors::CREAM_TEXT, barBuf, 0.30f);
+                 Colors::BORDER_WOOD, Colors::CREAM_TEXT, barBuf, 0.38f);
 
     char swBuf[16];
-    std::snprintf(swBuf, sizeof(swBuf), "Sw%u", state.currentLoop.swingPercent);
+    std::snprintf(swBuf, sizeof(swBuf), "S%u", state.currentLoop.swingPercent);
     uiDrawButton(btnSwing, state.currentLoop.swingPercent > 50 ? Colors::AMBER_JAM : Colors::BG_CARD,
                  Colors::BORDER_WOOD,
                  state.currentLoop.swingPercent > 50 ? Colors::BG_DARK : Colors::CREAM_TEXT,
-                 swBuf, 0.30f);
+                 swBuf, 0.38f);
 
-    uiDrawButton(btnDice,  Colors::PURPLE_SPELL, Colors::GOLD_TEXT, Colors::CREAM_TEXT, "DICE", 0.30f);
-    uiDrawButton(btnMix,   Colors::BG_CARD_ALT,  Colors::GOLD_TEXT, Colors::GOLD_TEXT,  "MIX",  0.30f);
-    uiDrawButton(btnClear, Colors::BG_CARD,      Colors::RED_REC,   Colors::RED_REC,    "CLR",  0.30f);
+    uiDrawButton(btnDice,  Colors::PURPLE_SPELL, Colors::GOLD_TEXT, Colors::CREAM_TEXT, "DICE", 0.38f);
+    uiDrawButton(btnMix,   Colors::BG_CARD_ALT,  Colors::GOLD_TEXT, Colors::GOLD_TEXT,  "MIX",  0.38f);
+    uiDrawButton(btnClear, Colors::BG_CARD,      Colors::RED_REC,   Colors::RED_REC,    "CLR",  0.38f);
 
     const TrackData& trk = state.currentLoop.tracks[state.activeTrack];
     int curStep = audioEngineGetCurrentStep();
@@ -85,7 +85,7 @@ void viewGridDrawBottom(const AppState& state) {
         } else {
             getNoteName(rowNote, lbl, sizeof(lbl));
         }
-        uiDrawText(2.0f, ry + 1.0f, 0.32f, 0.32f, Colors::MUTED_TEXT, lbl);
+        uiDrawText(1.0f, ry + 1.0f, 0.38f, 0.38f, Colors::MUTED_TEXT, lbl);
 
         for (int step = 0; step < BB_STEPS_PER_LOOP; ++step) {
             int absStep = pageOffset + step;

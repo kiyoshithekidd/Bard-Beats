@@ -63,8 +63,8 @@ void viewSongDrawTop(const AppState& state) {
         if (segW >= 34.0f) {
             char lbl[20];
             std::snprintf(lbl, sizeof(lbl), "%s x%d", getSectionTagName(e.sectionTag), reps);
-            uiDrawText(sr.x + 4.0f, sr.y + 6.0f, 0.34f, 0.34f, Colors::CREAM_TEXT, lbl);
-            uiDrawText(sr.x + 4.0f, sr.y + 24.0f, 0.30f, 0.30f, Colors::BG_DARK,
+            uiDrawText(sr.x + 4.0f, sr.y + 6.0f, 0.38f, 0.38f, Colors::CREAM_TEXT, lbl);
+            uiDrawText(sr.x + 4.0f, sr.y + 24.0f, 0.38f, 0.38f, Colors::BG_DARK,
                        state.getLoopNameById(e.loopId));
         }
 
@@ -85,7 +85,7 @@ void viewSongDrawTop(const AppState& state) {
         : (state.currentSong.hasSongVocal
                ? (state.currentSong.songVocalMuted ? "VOCAL LAYER (MUTED)" : "VOCAL LAYER (ACTIVE OVER SONG)")
                : "VOCAL LAYER: EMPTY (Tap REC VOC to sing over song)");
-    uiDrawText(14.0f + d * 0.4f, 140.0f, 0.36f, 0.36f,
+    uiDrawText(14.0f + d * 0.4f, 140.0f, 0.38f, 0.38f,
                state.isRecordingVocal ? Colors::RED_REC : Colors::GOLD_TEXT, vocStatus);
 
     float waveX = 14.0f + d * 0.6f;
@@ -136,9 +136,9 @@ void viewSongDrawBottom(const AppState& state) {
                 uiDrawText(r.x + 8.0f, r.y + 6.0f, 0.40f, 0.40f, Colors::GOLD_TEXT, s.name);
                 char sub[32];
                 std::snprintf(sub, sizeof(sub), "%u BPM | %u Clips", s.bpm, s.numEntries);
-                uiDrawText(r.x + 8.0f, r.y + 24.0f, 0.34f, 0.34f, Colors::CREAM_TEXT, sub);
+                uiDrawText(r.x + 8.0f, r.y + 24.0f, 0.38f, 0.38f, Colors::CREAM_TEXT, sub);
             } else {
-                uiDrawButton(r, Colors::BG_DARK, Colors::BG_PANEL, Colors::MUTED_TEXT, "(Empty)", 0.36f);
+                uiDrawButton(r, Colors::BG_DARK, Colors::BG_PANEL, Colors::MUTED_TEXT, "(Empty)", 0.38f);
             }
         }
 
@@ -149,12 +149,12 @@ void viewSongDrawBottom(const AppState& state) {
         Rect btnNext = {228.0f, 173.0f, 28.0f, 28.0f };
         Rect btnBack = {260.0f, 173.0f, 56.0f, 28.0f };
 
-        uiDrawButton(btnNew,  Colors::GREEN_PLAY,  Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+NEW", 0.36f);
-        uiDrawButton(btnWav,  Colors::BLUE_ACTION, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "EXP.WAV", 0.33f);
-        uiDrawButton(btnDel,  Colors::BG_CARD,     Colors::RED_REC,     Colors::RED_REC,    "DEL", 0.34f);
-        uiDrawButton(btnPrev, Colors::BG_CARD,     Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "<", 0.40f);
-        uiDrawButton(btnNext, Colors::BG_CARD,     Colors::BORDER_WOOD, Colors::GOLD_TEXT,  ">", 0.40f);
-        uiDrawButton(btnBack, Colors::BG_CARD_ALT, Colors::GOLD_TEXT,   Colors::GOLD_TEXT,  "BACK", 0.36f);
+        uiDrawButton(btnNew,  Colors::GREEN_PLAY,  Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+NEW", 0.38f);
+        uiDrawButton(btnWav,  Colors::BLUE_ACTION, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "EXP.WAV", 0.38f);
+        uiDrawButton(btnDel,  Colors::BG_CARD,     Colors::RED_REC,     Colors::RED_REC,    "DEL", 0.38f);
+        uiDrawButton(btnPrev, Colors::BG_CARD,     Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "<", 0.42f);
+        uiDrawButton(btnNext, Colors::BG_CARD,     Colors::BORDER_WOOD, Colors::GOLD_TEXT,  ">", 0.42f);
+        uiDrawButton(btnBack, Colors::BG_CARD_ALT, Colors::GOLD_TEXT,   Colors::GOLD_TEXT,  "BACK", 0.38f);
         return;
     }
 
@@ -167,16 +167,16 @@ void viewSongDrawBottom(const AppState& state) {
     Rect btnVocClr  = {232.0f, 68.0f, 44.0f, 24.0f };
     Rect btnMix     = {278.0f, 68.0f, 38.0f, 24.0f };
 
-    uiDrawButton(btnBpmDn, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-BPM", 0.32f);
-    uiDrawButton(btnBpmUp, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+BPM", 0.32f);
-    uiDrawButton(btnSongs, Colors::PURPLE_SPELL, Colors::GOLD_TEXT, Colors::CREAM_TEXT, "SONGS", 0.32f);
-    uiDrawButton(btnRename, Colors::BG_CARD_ALT, Colors::BORDER_WOOD, Colors::GOLD_TEXT, "NAME", 0.32f);
+    uiDrawButton(btnBpmDn, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-BM", 0.38f);
+    uiDrawButton(btnBpmUp, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+BM", 0.38f);
+    uiDrawButton(btnSongs, Colors::PURPLE_SPELL, Colors::GOLD_TEXT, Colors::CREAM_TEXT, "SONGS", 0.38f);
+    uiDrawButton(btnRename, Colors::BG_CARD_ALT, Colors::BORDER_WOOD, Colors::GOLD_TEXT, "NAME", 0.38f);
     uiDrawButton(btnVocMute,
                  state.currentSong.songVocalMuted ? Colors::RED_REC : Colors::BG_CARD,
                  Colors::BORDER_WOOD, Colors::CREAM_TEXT,
-                 state.currentSong.songVocalMuted ? "UNMUTE" : "MUTE V", 0.30f);
-    uiDrawButton(btnVocClr, Colors::BG_CARD, Colors::RED_REC, Colors::RED_REC, "CLRV", 0.30f);
-    uiDrawButton(btnMix, Colors::BG_CARD_ALT, Colors::GOLD_TEXT, Colors::GOLD_TEXT, "MIX", 0.32f);
+                 state.currentSong.songVocalMuted ? "UNMUTE" : "MUTE V", 0.38f);
+    uiDrawButton(btnVocClr, Colors::BG_CARD, Colors::RED_REC, Colors::RED_REC, "CLRV", 0.38f);
+    uiDrawButton(btnMix, Colors::BG_CARD_ALT, Colors::GOLD_TEXT, Colors::GOLD_TEXT, "MIX", 0.38f);
 
     // Row 2: Selected Clip Card + Prev/Next Slot Selector (y: 96..158)
     Rect btnPrevSlot = {  4.0f, 98.0f, 36.0f, 58.0f };
@@ -199,16 +199,16 @@ void viewSongDrawBottom(const AppState& state) {
 
         char loopLbl[48];
         std::snprintf(loopLbl, sizeof(loopLbl), "Loop: %s", state.getLoopNameById(e.loopId));
-        uiDrawText(cardRect.x + 8.0f, cardRect.y + 18.0f, 0.35f, 0.35f, Colors::CREAM_TEXT, loopLbl);
+        uiDrawText(cardRect.x + 8.0f, cardRect.y + 18.0f, 0.38f, 0.38f, Colors::CREAM_TEXT, loopLbl);
 
         Rect btnLpDn  = { cardRect.x +   8.0f, cardRect.y + 34.0f, 44.0f, 20.0f };
         Rect btnLpUp  = { cardRect.x +  56.0f, cardRect.y + 34.0f, 44.0f, 20.0f };
         Rect btnRepDn = { cardRect.x + 150.0f, cardRect.y + 34.0f, 34.0f, 20.0f };
         Rect btnRepUp = { cardRect.x + 188.0f, cardRect.y + 34.0f, 34.0f, 20.0f };
-        uiDrawButton(btnLpDn,  Colors::BG_DARK, Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "<LP", 0.32f);
-        uiDrawButton(btnLpUp,  Colors::BG_DARK, Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "LP>", 0.32f);
-        uiDrawButton(btnRepDn, Colors::BG_DARK, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-x",  0.34f);
-        uiDrawButton(btnRepUp, Colors::BG_DARK, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+x",  0.34f);
+        uiDrawButton(btnLpDn,  Colors::BG_DARK, Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "<LP", 0.38f);
+        uiDrawButton(btnLpUp,  Colors::BG_DARK, Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "LP>", 0.38f);
+        uiDrawButton(btnRepDn, Colors::BG_DARK, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-x",  0.38f);
+        uiDrawButton(btnRepUp, Colors::BG_DARK, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+x",  0.38f);
     } else {
         uiDrawButton(cardRect, Colors::BG_PANEL, Colors::BORDER_WOOD, Colors::MUTED_TEXT,
                      "No clips yet - Tap +ADD", 0.40f);
@@ -222,10 +222,10 @@ void viewSongDrawBottom(const AppState& state) {
     Rect btnDel   = {272.0f, 164.0f, 44.0f, 36.0f };
 
     uiDrawButton(btnAdd,  Colors::GREEN_PLAY,   Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+ADD", 0.38f);
-    uiDrawButton(btnCopy, Colors::AMBER_JAM,    Colors::BORDER_WOOD, Colors::BG_DARK,    "COPY+TWK", 0.35f);
-    uiDrawButton(btnEdit, Colors::BLUE_ACTION,  Colors::GOLD_TEXT,   Colors::CREAM_TEXT, "EDIT LP", 0.37f);
-    uiDrawButton(btnSec,  Colors::BG_CARD_ALT,  Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "SECT", 0.36f);
-    uiDrawButton(btnDel,  Colors::BG_CARD,      Colors::RED_REC,     Colors::RED_REC,    "DEL", 0.36f);
+    uiDrawButton(btnCopy, Colors::AMBER_JAM,    Colors::BORDER_WOOD, Colors::BG_DARK,    "COPY+TWK", 0.38f);
+    uiDrawButton(btnEdit, Colors::BLUE_ACTION,  Colors::GOLD_TEXT,   Colors::CREAM_TEXT, "EDIT LP", 0.38f);
+    uiDrawButton(btnSec,  Colors::BG_CARD_ALT,  Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "SECT", 0.38f);
+    uiDrawButton(btnDel,  Colors::BG_CARD,      Colors::RED_REC,     Colors::RED_REC,    "DEL", 0.38f);
 }
 
 void viewSongHandleTouch(AppState& state, float tx, float ty, bool isJustPressed) {

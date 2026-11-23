@@ -52,12 +52,20 @@ const char* getInstrumentName(uint8_t instId) {
     switch (instId) {
         case INST_TAVERN_KIT:   return "Tavern Kit";
         case INST_CHIP_KIT:     return "8-Bit Kit";
+        case INST_WAR_KIT:      return "War Drum Kit";
+        case INST_LOFI_KIT:     return "Modern Kit";
         case INST_UPRIGHT_BASS: return "Upright Bass";
         case INST_SUB_BASS:     return "Dungeon Sub";
-        case INST_OCARINA:      return "Ocarina";
+        case INST_ELEC_BASS:    return "Electric Bass";
+        case INST_OCARINA:      return "Clay Ocarina";
+        case INST_WOOD_FLUTE:   return "Wooden Flute";
         case INST_PULSE_LEAD:   return "Chip Lead";
+        case INST_SYNTH_BRASS:  return "Synth Brass";
         case INST_LUTE:         return "Bard's Lute";
         case INST_HARP:         return "Minstrel Harp";
+        case INST_ELEC_GUITAR:  return "Elec Guitar";
+        case INST_TAVERN_PIANO: return "Tavern Piano";
+        case INST_ELEC_KEYS:    return "Elec Keys";
         default:                return "Instrument";
     }
 }
@@ -65,13 +73,21 @@ const char* getInstrumentName(uint8_t instId) {
 const char* getInstrumentShortName(uint8_t instId) {
     switch (instId) {
         case INST_TAVERN_KIT:   return "TavKit";
-        case INST_CHIP_KIT:     return "8BitKit";
+        case INST_CHIP_KIT:     return "8BitKt";
+        case INST_WAR_KIT:      return "WarKit";
+        case INST_LOFI_KIT:     return "ModKit";
         case INST_UPRIGHT_BASS: return "UpBass";
-        case INST_SUB_BASS:     return "SubBass";
-        case INST_OCARINA:      return "Ocarina";
+        case INST_SUB_BASS:     return "SubBas";
+        case INST_ELEC_BASS:    return "EBass";
+        case INST_OCARINA:      return "Ocarin";
+        case INST_WOOD_FLUTE:   return "Flute";
         case INST_PULSE_LEAD:   return "ChipLd";
+        case INST_SYNTH_BRASS:  return "Brass";
         case INST_LUTE:         return "Lute";
         case INST_HARP:         return "Harp";
+        case INST_ELEC_GUITAR:  return "EGtr";
+        case INST_TAVERN_PIANO: return "Piano";
+        case INST_ELEC_KEYS:    return "EKeys";
         default:                return "Inst";
     }
 }
@@ -110,18 +126,25 @@ void getNoteName(uint8_t midiNote, char* outBuf, int bufSize) {
 }
 
 uint8_t cycleTrackInstrument(int trackIdx, uint8_t currentInstId) {
-    switch (trackIdx) {
-        case TRACK_DRUMS:
-            return (currentInstId == INST_TAVERN_KIT) ? INST_CHIP_KIT : INST_TAVERN_KIT;
-        case TRACK_BASS:
-            return (currentInstId == INST_UPRIGHT_BASS) ? INST_SUB_BASS : INST_UPRIGHT_BASS;
-        case TRACK_MELODY:
-            return (currentInstId == INST_OCARINA) ? INST_PULSE_LEAD : INST_OCARINA;
-        case TRACK_HARMONY:
-            return (currentInstId == INST_LUTE) ? INST_HARP : INST_LUTE;
-        default:
-            return currentInstId;
+    if (trackIdx == TRACK_DRUMS) {
+        static const uint8_t kDrumKits[4] = {
+            INST_TAVERN_KIT, INST_CHIP_KIT, INST_WAR_KIT, INST_LOFI_KIT
+        };
+        for (int i = 0; i < 4; ++i) {
+            if (kDrumKits[i] == currentInstId) return kDrumKits[(i + 1) % 4];
+        }
+        return INST_TAVERN_KIT;
     }
+
+    static const uint8_t kMelodicInsts[12] = {
+        INST_UPRIGHT_BASS, INST_SUB_BASS, INST_ELEC_BASS,
+        INST_OCARINA, INST_WOOD_FLUTE, INST_PULSE_LEAD, INST_SYNTH_BRASS,
+        INST_LUTE, INST_HARP, INST_ELEC_GUITAR, INST_TAVERN_PIANO, INST_ELEC_KEYS
+    };
+    for (int i = 0; i < 12; ++i) {
+        if (kMelodicInsts[i] == currentInstId) return kMelodicInsts[(i + 1) % 12];
+    }
+    return INST_LUTE;
 }
 
 void clearStepCell(StepCell& cell) {

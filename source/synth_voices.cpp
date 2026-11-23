@@ -205,27 +205,29 @@ void SynthVoices::triggerNote(int trackIdx, uint8_t instrumentId, uint8_t midiNo
     v.filterDecay  = std::exp(-10.0f / BB_SAMPLE_RATE);
 
     bool chip = (instrumentId == INST_CHIP_KIT);
-    if (instrumentId == INST_TAVERN_KIT || chip) {
+    bool war  = (instrumentId == INST_WAR_KIT);
+    bool lofi = (instrumentId == INST_LOFI_KIT);
+    if (instrumentId == INST_TAVERN_KIT || chip || war || lofi) {
         switch (midiNote) {
             case DRUM_KICK:
-                v.drumAmpDecay   = std::exp(-(chip ? 14.0f : 10.5f) / BB_SAMPLE_RATE);
-                v.drumPitchDecay = std::exp(-(chip ? 38.0f : 30.0f) / BB_SAMPLE_RATE);
+                v.drumAmpDecay   = std::exp(-(chip ? 14.0f : (war ? 7.8f : (lofi ? 12.5f : 10.5f))) / BB_SAMPLE_RATE);
+                v.drumPitchDecay = std::exp(-(chip ? 38.0f : (war ? 22.0f : 30.0f)) / BB_SAMPLE_RATE);
                 v.drumNoiseDecay = std::exp(-360.0f / BB_SAMPLE_RATE);
                 break;
             case DRUM_TOM:
-                v.drumAmpDecay   = std::exp(-11.5f / BB_SAMPLE_RATE);
-                v.drumPitchDecay = std::exp(-24.0f / BB_SAMPLE_RATE);
+                v.drumAmpDecay   = std::exp(-(war ? 7.5f : 11.5f) / BB_SAMPLE_RATE);
+                v.drumPitchDecay = std::exp(-(war ? 18.0f : 24.0f) / BB_SAMPLE_RATE);
                 break;
             case DRUM_SNARE:
-                v.drumAmpDecay   = std::exp(-22.0f / BB_SAMPLE_RATE);
+                v.drumAmpDecay   = std::exp(-(lofi ? 26.0f : 22.0f) / BB_SAMPLE_RATE);
                 v.drumPitchDecay = std::exp(-45.0f / BB_SAMPLE_RATE);
-                v.drumNoiseDecay = std::exp(-(chip ? 19.0f : 14.5f) / BB_SAMPLE_RATE);
+                v.drumNoiseDecay = std::exp(-(chip ? 19.0f : (war ? 11.5f : 14.5f)) / BB_SAMPLE_RATE);
                 break;
             case DRUM_CLAP:
-                v.drumAmpDecay   = std::exp(-13.0f / BB_SAMPLE_RATE);
+                v.drumAmpDecay   = std::exp(-(lofi ? 17.0f : 13.0f) / BB_SAMPLE_RATE);
                 break;
             case DRUM_CLOSED_HAT:
-                v.drumAmpDecay   = std::exp(-38.0f / BB_SAMPLE_RATE);
+                v.drumAmpDecay   = std::exp(-(lofi ? 48.0f : 38.0f) / BB_SAMPLE_RATE);
                 break;
             case DRUM_OPEN_HAT:
                 v.drumAmpDecay   = std::exp(-7.5f / BB_SAMPLE_RATE);
@@ -277,21 +279,24 @@ void SynthVoices::stopAll() {
 }
 
 float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
-    bool isDrum = (v.instrumentId == INST_TAVERN_KIT || v.instrumentId == INST_CHIP_KIT);
+    bool isDrum = (v.instrumentId == INST_TAVERN_KIT || v.instrumentId == INST_CHIP_KIT ||
+                   v.instrumentId == INST_WAR_KIT || v.instrumentId == INST_LOFI_KIT);
     if (isDrum) {
         bool chip = (v.instrumentId == INST_CHIP_KIT);
+        bool war  = (v.instrumentId == INST_WAR_KIT);
+        bool lofi = (v.instrumentId == INST_LOFI_KIT);
         float raw = 0.0f;
         switch (v.midiNote) {
             case DRUM_KICK: {
-                float fStart = chip ? 240.0f : 175.0f;
-                float fEnd   = chip ? 56.0f  : 62.0f;
+                float fStart = chip ? 240.0f : (war ? 145.0f : (lofi ? 195.0f : 175.0f));
+                float fEnd   = chip ? 56.0f  : (war ? 44.0f  : (lofi ? 52.0f  : 62.0f));
                 float sweepFreq = fEnd + (fStart - fEnd) * v.drumPitchEnv;
                 v.phase += sweepFreq * (1.0f / BB_SAMPLE_RATE);
                 if (v.phase >= 1.0f) v.phase -= 1.0f;
                 float osc = chip ? (1.0f - 4.0f * std::fabs(v.phase - 0.5f))
                                  : fastSin(v.phase);
-                float body = fastSoftClip(osc * 1.45f) * v.drumAmpEnv;
-                float click = (v.ageSamples < 260) ? (nextWhiteNoise(v.rngState) * v.drumNoiseEnv * 0.35f) : 0.0f;
+                float body = fastSoftClip(osc * (war ? 1.65f : 1.45f)) * v.drumAmpEnv;
+                float click = (v.ageSamples < 260) ? (nextWhiteNoise(v.rngState) * v.drumNoiseEnv * (lofi ? 0.45f : 0.35f)) : 0.0f;
                 raw = (body + click) * 1.25f;
                 v.drumAmpEnv   *= v.drumAmpDecay;
                 v.drumPitchEnv *= v.drumPitchDecay;
@@ -300,10 +305,10 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
                 break;
             }
             case DRUM_TOM: {
-                float sweepFreq = 105.0f + 100.0f * v.drumPitchEnv;
+                float sweepFreq = (war ? 78.0f : 105.0f) + (war ? 75.0f : 100.0f) * v.drumPitchEnv;
                 v.phase += sweepFreq * (1.0f / BB_SAMPLE_RATE);
                 if (v.phase >= 1.0f) v.phase -= 1.0f;
-                float skin = fastSin(v.phase) + 0.22f * fastSin(v.phase * 1.59f);
+                float skin = fastSin(v.phase) + (war ? 0.34f : 0.22f) * fastSin(v.phase * 1.59f);
                 raw = skin * v.drumAmpEnv * 0.90f;
                 v.drumAmpEnv   *= v.drumAmpDecay;
                 v.drumPitchEnv *= v.drumPitchDecay;
@@ -311,7 +316,7 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
                 break;
             }
             case DRUM_SNARE: {
-                float bodyFreq = (chip ? 220.0f : 185.0f) + 75.0f * v.drumPitchEnv;
+                float bodyFreq = (chip ? 220.0f : (war ? 150.0f : 185.0f)) + 75.0f * v.drumPitchEnv;
                 v.phase += bodyFreq * (1.0f / BB_SAMPLE_RATE);
                 if (v.phase >= 1.0f) v.phase -= 1.0f;
                 float body = fastSin(v.phase) * v.drumAmpEnv;
@@ -392,8 +397,9 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
     switch (v.envStage) {
         case ENV_ATTACK: {
             float atkStep = 0.020f;
-            if (v.instrumentId == INST_OCARINA) atkStep = 0.0016f;
-            else if (v.instrumentId == INST_HARP) atkStep = 0.025f;
+            if (v.instrumentId == INST_OCARINA || v.instrumentId == INST_WOOD_FLUTE) atkStep = 0.0025f;
+            else if (v.instrumentId == INST_SYNTH_BRASS) atkStep = 0.0032f;
+            else if (v.instrumentId == INST_HARP || v.instrumentId == INST_TAVERN_PIANO) atkStep = 0.028f;
             v.envLevel += atkStep;
             if (v.envLevel >= 1.0f) {
                 v.envLevel = 1.0f;
@@ -407,6 +413,12 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
             if (v.instrumentId == INST_LUTE || v.instrumentId == INST_HARP || v.instrumentId == INST_UPRIGHT_BASS) {
                 sus = 0.96f;
                 decStep = 0.00005f;
+            } else if (v.instrumentId == INST_TAVERN_PIANO || v.instrumentId == INST_ELEC_GUITAR) {
+                sus = 0.42f;
+                decStep = 0.00014f;
+            } else if (v.instrumentId == INST_ELEC_KEYS || v.instrumentId == INST_ELEC_BASS) {
+                sus = 0.58f;
+                decStep = 0.00012f;
             } else if (v.instrumentId == INST_PULSE_LEAD) {
                 sus = 0.65f;
                 decStep = 0.00030f;
@@ -422,8 +434,8 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
             break;
         case ENV_RELEASE: {
             float relStep = 0.0009f;
-            if (v.instrumentId == INST_LUTE || v.instrumentId == INST_HARP) relStep = 0.00022f;
-            else if (v.instrumentId == INST_OCARINA) relStep = 0.00065f;
+            if (v.instrumentId == INST_LUTE || v.instrumentId == INST_HARP || v.instrumentId == INST_TAVERN_PIANO) relStep = 0.00028f;
+            else if (v.instrumentId == INST_OCARINA || v.instrumentId == INST_WOOD_FLUTE) relStep = 0.0011f;
             v.envLevel -= relStep;
             if (v.envLevel <= 0.0f) {
                 v.envLevel = 0.0f;
@@ -460,26 +472,46 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
         if (v.instrumentId == INST_UPRIGHT_BASS) raw *= 1.18f;
         v.samplePos += v.sampleInc * pitchMult;
     } else if (v.instrumentId == INST_OCARINA) {
-        // Fast LUT Clay Ocarina: gentle breath pitch scoop + delayed natural vibrato + warm harmonics
-        float scoop = (v.ageSamples < 1400)
-            ? (1.0f - 0.012f * (1.0f - static_cast<float>(v.ageSamples) * (1.0f / 1400.0f)))
+        // Clean Helmholtz Clay Ocarina: pure sine-rich tone, gentle scoop, brief 27ms attack chiff (zero continuous hiss!)
+        float scoop = (v.ageSamples < 1100)
+            ? (1.0f - 0.010f * (1.0f - static_cast<float>(v.ageSamples) * (1.0f / 1100.0f)))
             : 1.0f;
-        v.phase2 += 5.2f * (1.0f / BB_SAMPLE_RATE);
+        v.phase2 += 5.0f * (1.0f / BB_SAMPLE_RATE);
         if (v.phase2 >= 1.0f) v.phase2 -= 1.0f;
-        float vib = (v.ageSamples > 5200) ? (1.0f + 0.007f * fastSin(v.phase2)) : 1.0f;
+        float vib = (v.ageSamples > 4800) ? (1.0f + 0.0055f * fastSin(v.phase2)) : 1.0f;
 
         v.phase += v.phaseInc * pitchMult * scoop * vib;
         if (v.phase >= 1.0f) v.phase -= static_cast<float>(static_cast<int>(v.phase));
 
         float f1 = fastSin(v.phase);
-        float f2 = 0.28f * fastSin(v.phase * 2.0f);
-        float f3 = 0.10f * fastSin(v.phase * 3.0f);
+        float f2 = 0.07f * fastSin(v.phase * 2.0f);
+        float f3 = 0.015f * fastSin(v.phase * 3.0f);
 
+        float chiff = 0.0f;
+        if (v.ageSamples < 900) {
+            float n = nextWhiteNoise(v.rngState);
+            v.lpfState  += 0.20f * (n - v.lpfState);
+            v.lpfState2 += 0.08f * (v.lpfState - v.lpfState2);
+            float tChiff = 1.0f - static_cast<float>(v.ageSamples) * (1.0f / 900.0f);
+            chiff = (v.lpfState - v.lpfState2) * (0.07f * tChiff);
+        }
+        raw = (f1 + f2 + f3) * 0.58f + chiff;
+    } else if (v.instrumentId == INST_WOOD_FLUTE) {
+        // Airy Medieval Wooden Flute: polyphonic-friendly gain + gentle 2nd/3rd harmonics + soft breath chiff
+        v.phase2 += 5.4f * (1.0f / BB_SAMPLE_RATE);
+        if (v.phase2 >= 1.0f) v.phase2 -= 1.0f;
+        float vib = (v.ageSamples > 4200) ? (1.0f + 0.006f * fastSin(v.phase2)) : 1.0f;
+
+        v.phase += v.phaseInc * pitchMult * vib;
+        if (v.phase >= 1.0f) v.phase -= static_cast<float>(static_cast<int>(v.phase));
+
+        float tri = 1.0f - 4.0f * std::fabs(v.phase - 0.5f);
+        float tone = 0.68f * fastSin(v.phase) + 0.22f * tri + 0.12f * fastSin(v.phase * 2.0f) + 0.05f * fastSin(v.phase * 3.0f);
         float n = nextWhiteNoise(v.rngState);
-        v.lpfState  += 0.28f * (n - v.lpfState);
-        v.lpfState2 += 0.09f * (v.lpfState - v.lpfState2);
-        float breathAmt = 0.03f + ((v.ageSamples < 1800) ? (0.10f * (1.0f - static_cast<float>(v.ageSamples) * (1.0f / 1800.0f))) : 0.0f);
-        raw = (f1 + f2 + f3) * 1.05f + (v.lpfState - v.lpfState2) * breathAmt;
+        v.lpfState  += 0.24f * (n - v.lpfState);
+        v.lpfState2 += 0.10f * (v.lpfState - v.lpfState2);
+        float breathAmt = (v.ageSamples < 1400) ? (0.09f * (1.0f - static_cast<float>(v.ageSamples) * (1.0f / 1400.0f))) : 0.012f;
+        raw = tone * 0.54f + (v.lpfState - v.lpfState2) * breathAmt;
     } else if (v.instrumentId == INST_PULSE_LEAD) {
         float dt1 = v.phaseInc * pitchMult;
         float dt2 = dt1 * 1.0035f;
@@ -500,7 +532,58 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
         v.filterEnv *= v.filterDecay;
         v.lpfState  += cutoff * (osc - v.lpfState);
         v.lpfState2 += cutoff * (v.lpfState - v.lpfState2);
-        raw = v.lpfState2 * 0.85f;
+        raw = v.lpfState2 * 0.78f;
+    } else if (v.instrumentId == INST_SYNTH_BRASS) {
+        // Modern detuned dual-saw Synth Brass with warm filter swell
+        float dt1 = v.phaseInc * pitchMult;
+        float dt2 = dt1 * 1.005f;
+        v.phase  += dt1; if (v.phase >= 1.0f) v.phase -= static_cast<float>(static_cast<int>(v.phase));
+        v.phase2 += dt2; if (v.phase2 >= 1.0f) v.phase2 -= static_cast<float>(static_cast<int>(v.phase2));
+        float saw1 = (2.0f * v.phase - 1.0f) - polyBlep(v.phase, dt1);
+        float saw2 = (2.0f * v.phase2 - 1.0f) - polyBlep(v.phase2, dt2);
+        float osc = 0.50f * (saw1 + saw2);
+        float cutoff = 0.12f + 0.42f * v.envLevel;
+        v.lpfState  += cutoff * (osc - v.lpfState);
+        v.lpfState2 += cutoff * (v.lpfState - v.lpfState2);
+        raw = v.lpfState2 * 0.65f;
+    } else if (v.instrumentId == INST_ELEC_BASS) {
+        // Punchy modern fingered/picked Electric Bass
+        float dt = v.phaseInc * pitchMult;
+        v.phase += dt; if (v.phase >= 1.0f) v.phase -= static_cast<float>(static_cast<int>(v.phase));
+        float f = fastSin(v.phase) + 0.45f * fastSin(v.phase * 2.0f) + 0.20f * v.filterEnv * fastSin(v.phase * 3.0f);
+        v.filterEnv *= v.filterDecay;
+        raw = fastSoftClip(f * 0.85f) * 0.75f;
+    } else if (v.instrumentId == INST_ELEC_GUITAR) {
+        // Clean/warm Electric Guitar with harmonic pluck & gentle amp warmth
+        float dt = v.phaseInc * pitchMult;
+        v.phase += dt; if (v.phase >= 1.0f) v.phase -= static_cast<float>(static_cast<int>(v.phase));
+        float h = v.filterEnv;
+        v.filterEnv *= v.filterDecay;
+        float str = fastSin(v.phase)
+                  + (0.48f * h + 0.14f) * fastSin(v.phase * 2.0f)
+                  + (0.30f * h) * fastSin(v.phase * 3.0f)
+                  + (0.16f * h) * fastSin(v.phase * 4.0f);
+        raw = fastSoftClip(str * 0.75f) * 0.62f;
+    } else if (v.instrumentId == INST_TAVERN_PIANO) {
+        // Acoustic Upright Piano: hammer transient + warm decaying upper partials
+        float dt = v.phaseInc * pitchMult;
+        v.phase += dt; if (v.phase >= 1.0f) v.phase -= static_cast<float>(static_cast<int>(v.phase));
+        float h = v.filterEnv;
+        v.filterEnv *= v.filterDecay;
+        float body = fastSin(v.phase)
+                   + (0.38f * h + 0.08f) * fastSin(v.phase * 2.0f)
+                   + (0.22f * h) * fastSin(v.phase * 3.0f)
+                   + (0.12f * h * h) * fastSin(v.phase * 4.0f);
+        raw = body * 0.58f;
+    } else if (v.instrumentId == INST_ELEC_KEYS) {
+        // Warm Rhodes-style Electric Piano: fundamental + bell tine on attack
+        float dt = v.phaseInc * pitchMult;
+        v.phase += dt; if (v.phase >= 1.0f) v.phase -= static_cast<float>(static_cast<int>(v.phase));
+        float h = v.filterEnv;
+        v.filterEnv *= v.filterDecay;
+        float tine = 0.22f * h * h * fastSin(v.phase * 7.0f);
+        float body = fastSin(v.phase) + 0.18f * h * fastSin(v.phase * 2.0f) + tine;
+        raw = body * 0.62f;
     } else {
         float dt = v.phaseInc * pitchMult;
         v.phase += dt;

@@ -77,7 +77,9 @@ int main(int argc, char* argv[]) {
 
         if (isJustPressed) {
             if (!BardBeats::uiHandleBottomChromeTouch(state, tx, ty)) {
-                if (state.showMixDrawer) {
+                if (state.showInstPicker) {
+                    BardBeats::uiHandleInstPickerTouch(state, tx, ty);
+                } else if (state.showMixDrawer) {
                     BardBeats::uiHandleMixDrawerTouch(state, tx, ty, true, true);
                 } else {
                     switch (state.activeView) {
@@ -139,7 +141,9 @@ int main(int argc, char* argv[]) {
         C2D_TargetClear(bot, BardBeats::Colors::BG_DARK);
         C2D_SceneBegin(bot);
         BardBeats::uiDrawBottomChrome(state);
-        if (state.showMixDrawer) {
+        if (state.showInstPicker) {
+            BardBeats::uiDrawInstPicker(state);
+        } else if (state.showMixDrawer) {
             BardBeats::uiDrawMixDrawer(state);
         } else {
             switch (state.activeView) {

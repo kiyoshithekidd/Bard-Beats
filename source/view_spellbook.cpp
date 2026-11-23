@@ -49,9 +49,9 @@ void viewSpellbookDrawBottom(const AppState& state) {
             std::snprintf(sub, sizeof(sub), "%u BPM | %s%s",
                           item.bpm, getScaleName(item.scaleId),
                           item.numBars == 2 ? " 2B" : "");
-            uiDrawText(r.x + 8.0f, r.y + 24.0f, 0.34f, 0.34f, Colors::CREAM_TEXT, sub);
+            uiDrawText(r.x + 8.0f, r.y + 24.0f, 0.38f, 0.38f, Colors::CREAM_TEXT, sub);
         } else {
-            uiDrawButton(r, Colors::BG_DARK, Colors::BG_PANEL, Colors::MUTED_TEXT, "(Empty)", 0.36f);
+            uiDrawButton(r, Colors::BG_DARK, Colors::BG_PANEL, Colors::MUTED_TEXT, "(Empty)", 0.38f);
         }
     }
 
@@ -65,18 +65,18 @@ void viewSpellbookDrawBottom(const AppState& state) {
     Rect btnPrev   = {272.0f, 173.0f, 22.0f, 28.0f };
     Rect btnNext   = {296.0f, 173.0f, 21.0f, 28.0f };
 
-    uiDrawButton(btnRename, Colors::BG_CARD_ALT, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "NAME", 0.32f);
-    uiDrawButton(btnCopy,   Colors::BG_CARD_ALT, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "COPY", 0.32f);
+    uiDrawButton(btnRename, Colors::BG_CARD_ALT, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "NAME", 0.38f);
+    uiDrawButton(btnCopy,   Colors::BG_CARD_ALT, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "COPY", 0.38f);
     uiDrawButton(btnCue,
                  state.spellbookQuantizedCue ? Colors::AMBER_JAM : Colors::PURPLE_SPELL,
                  Colors::BORDER_WOOD,
                  state.spellbookQuantizedCue ? Colors::BG_DARK : Colors::CREAM_TEXT,
-                 state.spellbookQuantizedCue ? "Q:BAR" : "Q:NOW", 0.32f);
-    uiDrawButton(btnMidi,   Colors::BLUE_ACTION, Colors::BORDER_WOOD, Colors::CREAM_TEXT, ".MID", 0.32f);
-    uiDrawButton(btnWav,    Colors::GREEN_PLAY,  Colors::BORDER_WOOD, Colors::CREAM_TEXT, ".WAV", 0.32f);
-    uiDrawButton(btnDel,    Colors::BG_CARD,     Colors::RED_REC,     Colors::RED_REC,    "DEL", 0.30f);
-    uiDrawButton(btnPrev,   Colors::BG_CARD,     Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "<", 0.38f);
-    uiDrawButton(btnNext,   Colors::BG_CARD,     Colors::BORDER_WOOD, Colors::GOLD_TEXT,  ">", 0.38f);
+                 state.spellbookQuantizedCue ? "Q:BAR" : "Q:NOW", 0.38f);
+    uiDrawButton(btnMidi,   Colors::BLUE_ACTION, Colors::BORDER_WOOD, Colors::CREAM_TEXT, ".MID", 0.38f);
+    uiDrawButton(btnWav,    Colors::GREEN_PLAY,  Colors::BORDER_WOOD, Colors::CREAM_TEXT, ".WAV", 0.38f);
+    uiDrawButton(btnDel,    Colors::BG_CARD,     Colors::RED_REC,     Colors::RED_REC,    "DEL", 0.38f);
+    uiDrawButton(btnPrev,   Colors::BG_CARD,     Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "<", 0.40f);
+    uiDrawButton(btnNext,   Colors::BG_CARD,     Colors::BORDER_WOOD, Colors::GOLD_TEXT,  ">", 0.40f);
 }
 
 void viewSpellbookHandleTouch(AppState& state, float tx, float ty, bool isJustPressed) {

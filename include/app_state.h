@@ -35,8 +35,9 @@ struct AppState {
     bool     editingFromSong = false;
     int      returnSongSlot = 0;
 
-    // Mix Overlay Drawer (#4) & Wi-Fi MIDI (#6)
+    // Mix Overlay Drawer (#4), Instrument Picker (#20), & Wi-Fi MIDI (#6)
     bool     showMixDrawer = false;
+    bool     showInstPicker = false;
     bool     wifiMidiEnabled = false;
 
     // Vocal Layer & Non-Destructive Retake Shadow Buffer

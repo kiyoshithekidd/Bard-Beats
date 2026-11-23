@@ -31,17 +31,17 @@ void viewPadsDrawTop(const AppState& state) {
 }
 
 void viewPadsDrawBottom(const AppState& state) {
-    Rect btnMode = {   4.0f, 67.0f, 154.0f, 19.0f };
-    Rect btnDice = { 162.0f, 67.0f,  76.0f, 19.0f };
-    Rect btnOct  = { 242.0f, 67.0f,  74.0f, 19.0f };
+    Rect btnMode = {   4.0f, 67.0f, 150.0f, 20.0f };
+    Rect btnDice = { 158.0f, 67.0f,  74.0f, 20.0f };
+    Rect btnOct  = { 236.0f, 67.0f,  80.0f, 20.0f };
 
     const char* modeStr = (state.perfMode == 1) ? "MODE: CHORD"
                                                 : (state.perfMode == 2 ? "MODE: ARP" : "MODE: NOTE");
     uiDrawButton(btnMode, state.perfMode > 0 ? Colors::BLUE_ACTION : Colors::BG_CARD,
-                 Colors::BORDER_WOOD, Colors::CREAM_TEXT, modeStr, 0.34f);
-    uiDrawButton(btnDice, Colors::PURPLE_SPELL, Colors::GOLD_TEXT, Colors::CREAM_TEXT, "DICE", 0.34f);
+                 Colors::BORDER_WOOD, Colors::CREAM_TEXT, modeStr, 0.38f);
+    uiDrawButton(btnDice, Colors::PURPLE_SPELL, Colors::GOLD_TEXT, Colors::CREAM_TEXT, "DICE", 0.38f);
     const char* octStr = (state.octaveOffset < 0) ? "OCT: LOW" : (state.octaveOffset > 0 ? "OCT: HI" : "OCT: MID");
-    uiDrawButton(btnOct, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, octStr, 0.32f);
+    uiDrawButton(btnOct, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, octStr, 0.38f);
 
     uint32_t trkCol = Colors::TRACK_COLORS[state.activeTrack];
     for (int i = 0; i < 8; ++i) {
@@ -77,10 +77,10 @@ void viewPadsHandleTouch(AppState& state, float tx, float ty, bool isJustPressed
     }
 
     if (isJustPressed) {
-        if (ty >= 67.0f && ty < 87.0f) {
-            Rect btnMode = {   4.0f, 67.0f, 154.0f, 19.0f };
-            Rect btnDice = { 162.0f, 67.0f,  76.0f, 19.0f };
-            Rect btnOct  = { 242.0f, 67.0f,  74.0f, 19.0f };
+        if (ty >= 67.0f && ty < 88.0f) {
+            Rect btnMode = {   4.0f, 67.0f, 150.0f, 20.0f };
+            Rect btnDice = { 158.0f, 67.0f,  74.0f, 20.0f };
+            Rect btnOct  = { 236.0f, 67.0f,  80.0f, 20.0f };
             if (btnMode.contains(tx, ty)) {
                 state.cyclePerfMode();
             } else if (btnDice.contains(tx, ty)) {

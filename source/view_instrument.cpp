@@ -53,13 +53,15 @@ void viewInstrumentDrawTop(const AppState& state) {
     C2D_SpriteSheet sheet = uiGetSpriteSheet();
     if (sheet) {
         size_t spriteIdx = sprites_lute_idx;
-        if (inst == INST_OCARINA || inst == INST_PULSE_LEAD) {
+        if (inst == INST_OCARINA || inst == INST_WOOD_FLUTE ||
+            inst == INST_PULSE_LEAD || inst == INST_SYNTH_BRASS) {
             spriteIdx = sprites_ocarina_idx;
-        } else if (inst == INST_HARP) {
+        } else if (inst == INST_HARP || inst == INST_TAVERN_PIANO || inst == INST_ELEC_KEYS) {
             spriteIdx = sprites_harp_idx;
-        } else if (inst == INST_TAVERN_KIT || inst == INST_CHIP_KIT) {
+        } else if (inst == INST_TAVERN_KIT || inst == INST_CHIP_KIT ||
+                   inst == INST_WAR_KIT || inst == INST_LOFI_KIT) {
             spriteIdx = sprites_drums_idx;
-        } else if (inst == INST_UPRIGHT_BASS || inst == INST_SUB_BASS) {
+        } else if (inst == INST_UPRIGHT_BASS || inst == INST_SUB_BASS || inst == INST_ELEC_BASS) {
             spriteIdx = sprites_bass_idx;
         }
         C2D_Image img = C2D_SpriteSheetGetImage(sheet, spriteIdx);
@@ -132,7 +134,7 @@ void viewInstrumentDrawTop(const AppState& state) {
     C2D_DrawRectSolid(gaugeX, 174.0f, 0.25f, gaugeW, 8.0f, Colors::BG_DARK);
     float thumbX = gaugeX + (gaugeW * 0.5f) + (state.circleBendSemis / 2.0f) * (gaugeW * 0.45f);
     C2D_DrawRectSolid(thumbX - 4.0f, 171.0f, 0.30f, 8.0f, 14.0f, Colors::PLAYHEAD_LINE);
-    uiDrawText(16.0f, 170.0f, 0.36f, 0.36f, Colors::CREAM_TEXT, "Pitch Bend:");
+    uiDrawText(16.0f, 169.0f, 0.38f, 0.38f, Colors::CREAM_TEXT, "Pitch Bend:");
 
     // Compact 16-step beat progress bar at y: 198
     int curStep = audioEngineGetCurrentStep();
@@ -147,21 +149,21 @@ void viewInstrumentDrawTop(const AppState& state) {
 }
 
 void viewInstrumentDrawBottom(const AppState& state) {
-    Rect btnMode = {   4.0f, 67.0f, 154.0f, 19.0f };
-    Rect btnDice = { 162.0f, 67.0f,  76.0f, 19.0f };
-    Rect btnOct  = { 242.0f, 67.0f,  74.0f, 19.0f };
+    Rect btnMode = {   4.0f, 67.0f, 150.0f, 20.0f };
+    Rect btnDice = { 158.0f, 67.0f,  74.0f, 20.0f };
+    Rect btnOct  = { 236.0f, 67.0f,  80.0f, 20.0f };
 
     const char* modeStr = (state.perfMode == 1) ? "MODE: CHORD"
                                                 : (state.perfMode == 2 ? "MODE: ARP" : "MODE: NOTE");
     uiDrawButton(btnMode, state.perfMode > 0 ? Colors::BLUE_ACTION : Colors::BG_CARD,
-                 Colors::BORDER_WOOD, Colors::CREAM_TEXT, modeStr, 0.34f);
-    uiDrawButton(btnDice, Colors::PURPLE_SPELL, Colors::GOLD_TEXT, Colors::CREAM_TEXT, "DICE", 0.34f);
+                 Colors::BORDER_WOOD, Colors::CREAM_TEXT, modeStr, 0.38f);
+    uiDrawButton(btnDice, Colors::PURPLE_SPELL, Colors::GOLD_TEXT, Colors::CREAM_TEXT, "DICE", 0.38f);
     const char* octStr = (state.octaveOffset < 0) ? "OCT: LOW" : (state.octaveOffset > 0 ? "OCT: HI" : "OCT: MID");
-    uiDrawButton(btnOct, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, octStr, 0.32f);
+    uiDrawButton(btnOct, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, octStr, 0.38f);
 
     uint32_t trkCol = Colors::TRACK_COLORS[state.activeTrack];
     for (int deg = 0; deg < 8; ++deg) {
-        Rect r = { 4.0f + deg * 39.2f, 89.0f, 36.5f, 113.0f };
+        Rect r = { 4.0f + deg * 39.2f, 90.0f, 36.5f, 112.0f };
         bool lit = (s_lastStrumDeg == deg) || (state.liveFlashFrames > 0 && state.lastLiveDegree == deg);
         uint32_t bg = lit ? trkCol : ((deg % 2 == 0) ? Colors::BG_CARD : Colors::BG_CARD_ALT);
 
@@ -185,10 +187,10 @@ void viewInstrumentHandleTouch(AppState& state, float tx, float ty, bool isJustP
         return;
     }
 
-    if (isJustPressed && ty >= 67.0f && ty < 87.0f) {
-        Rect btnMode = {   4.0f, 67.0f, 154.0f, 19.0f };
-        Rect btnDice = { 162.0f, 67.0f,  76.0f, 19.0f };
-        Rect btnOct  = { 242.0f, 67.0f,  74.0f, 19.0f };
+    if (isJustPressed && ty >= 67.0f && ty < 88.0f) {
+        Rect btnMode = {   4.0f, 67.0f, 150.0f, 20.0f };
+        Rect btnDice = { 158.0f, 67.0f,  74.0f, 20.0f };
+        Rect btnOct  = { 236.0f, 67.0f,  80.0f, 20.0f };
         if (btnMode.contains(tx, ty)) {
             state.cyclePerfMode();
         } else if (btnDice.contains(tx, ty)) {
@@ -199,9 +201,12 @@ void viewInstrumentHandleTouch(AppState& state, float tx, float ty, bool isJustP
         return;
     }
 
-    if ((isJustPressed || isHeld) && ty >= 89.0f && ty < 202.0f) {
+    if ((isJustPressed || isHeld) && ty >= 90.0f && ty < 202.0f) {
         int deg = static_cast<int>((tx - 4.0f) / 39.2f);
         if (deg >= 0 && deg < 8 && deg != s_lastStrumDeg) {
+            if (s_lastStrumDeg >= 0) {
+                state.releaseLiveNotes();
+            }
             s_lastStrumDeg = deg;
             state.playLiveDegree(deg, 105);
         }
