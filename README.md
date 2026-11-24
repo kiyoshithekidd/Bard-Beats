@@ -14,8 +14,12 @@ A standalone loop maker for the Nintendo 3DS. A step sequencer and MIDI synth th
 
 ## Status
 
-- **v0.6.0 (Complete & Building on `main`)**: Adds dedicated `384x152` illustrated sprite assets and pixel-aligned interactive note overlays for all 16 instruments across `sprites.t3x` and `sprites2.t3x` (`#21`).
-- **v0.5.0**: Boosted `MASTER_GAIN` (`2.15f`), normalized per-instrument synthesis loudness for 3DS speakers, and added `0-200%` per-track gain boost sliders with a `100%` unity reference tick in the Mix Drawer (`#22`).
+- **v0.7.0 (Audio Studio Polish, Ergonomic 3DS Controls & Bardic Workflow — `#23`, `#24`, `#25`)**:
+  - **Audio Overhaul (`#23`)**: Replaced hard-clamping master clipper with a stereo-linked **Master Bus Envelope Compressor/Limiter**, added **Auto Headphone Detection** (`DSP_GetHeadphoneStatus`) switching between **3DS Speaker Voicing** (`135 Hz` Butterworth HPF + `1.8 kHz` presence) and **Headphone Full-Bass**, added `2.5 ms` anti-click voice-steal crossfades, linear-interpolated sine LUT, pre-limiter metronome, **Per-Instrument Gain Trim (`-50..+50%`)**, **Master Volume (`0-150%`)**, and **inline horizontal drag-volume directly on Track Tabs** across every view.
+  - **Controls & Ocarina Alignment (`#24`)**: Symmetric clockwise button mapping (`D-Pad Left/Up/Right/Down` = Notes 1–4, `Y/X/A/B` = Notes 5–8) with on-screen button badges, ordered 8 primary Ocarina finger holes + **Dual-Diamond Ocarina/Flute bottom touch layout**, configurable **`L`/`R` Shoulder Modes** (*Momentary Octave Hold*, *Flat/Sharp Semitones*, *Sustain Latch + 16th Accent Roll*), and fixed `getScaleNote()` octave wrapping for `CHORD` and `ARP`.
+  - **Workflow & Sequencer Fixes (`#25`)**: **4-Beat Metronome Count-In** before `REC`/`MIC` from stopped, **Tap Tempo + `±1 BPM` steppers**, **Per-Slot `[D][B][M][H]` Track Mute pills** in Song Mode, **Smart Scale Remapping** (zero ghost notes), Grid Note-Off release fix, Root/Octave row highlighting, **8-step Multi-Track Undo Ring**, **Controls Cheat-Sheet Scroll** (`?` / Hold `SELECT`), and persistent `sdmc:/3ds/BardBeats/config.bin`.
+- **v0.6.0**: Dedicated `384x152` illustrated sprite assets and pixel-aligned interactive note overlays for all 16 instruments across `sprites.t3x` and `sprites2.t3x` (`#21`).
+- **v0.5.0**: Boosted `MASTER_GAIN`, normalized per-instrument synthesis loudness for 3DS speakers, and added `0-200%` per-track gain boost sliders in the Mix Drawer (`#22`).
 - **v0.4.0**: Raised minimum UI text scale to `0.38f` across all views (`#18`), fixed Ocarina live-drag voice pileup and static clipping (`#19`), and expanded the instrument library to 16 fantasy + modern instruments with a visual Instrument Picker and cross-track layering (`#20`).
 - **v0.3.0**: Fixed Track Mute (`#7`), 2-Bar Grid Cycling (`#8`), 2-Bar Song Timeline (`#9`), Song Slot Loop Cycler (`#10`), and Quantized Cue Sync (`#11`), and added Chord/Arp Mode (`#12`), Sustained Note Lengths (`#13`), Woodblock Metronome (`#14`), Bardic Dice (`#15`), Root Key Transpose (`#16`), and Live VU Pulse Meter (`#17`).
 
@@ -36,10 +40,12 @@ Nintendo 3DS homebrew (`.3dsx` for Homebrew Launcher and `.cia` for HOME Menu).
 ## Controls
 
 - `START`: Play / Stop
-- `SELECT`: Toggle Spellbook Quick Play
-- `A / B / X / Y / D-Pad`: Play 8 scale notes live
-- `Circle Pad`: Pitch bend (Left/Right) and Vibrato (Up)
-- `L / R`: Octave Down / Up
+- `SELECT`: Tap to toggle Spellbook Quick Play | **Hold** to open Controls Cheat-Sheet Scroll
+- `D-Pad (Left, Up, Right, Down)`: Play Scale Notes 1–4 live
+- `Face Buttons (Y, X, A, B)`: Play Scale Notes 5–8 live (symmetric clockwise from 9 o'clock!)
+- `Circle Pad`: Pitch bend ($\pm 2$ semitones Left/Right) and Vibrato (Up)
+- `L / R`: Configurable in `MIX` — **OCT** (Momentary `-1 / +1 / +2` Octave Hold), **b/#** (Flat `-1st` / Sharp `+1st` chromatic accidentals), or **ROLL** (Hold `L` Sustain Latch / Hold `R` 16th Accent Roll)
+- `Drag Track Tabs L/R`: Quick inline Track Volume (`0–200%`) from any view
 - `3D Slider`: Adjust top-screen Stereoscopic 3D depth
 - `L + R + START`: Exit to Homebrew Launcher
 

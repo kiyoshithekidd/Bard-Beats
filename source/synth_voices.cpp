@@ -21,15 +21,17 @@ static void initSinLut() {
 }
 
 static inline float fastSin(float phase01) {
-    int idx = static_cast<int>(phase01 * static_cast<float>(SIN_LUT_SIZE)) & (SIN_LUT_SIZE - 1);
-    return s_sinLut[idx];
+    phase01 -= std::floor(phase01);
+    float fIdx = phase01 * static_cast<float>(SIN_LUT_SIZE);
+    int idx0 = static_cast<int>(fIdx) & (SIN_LUT_SIZE - 1);
+    int idx1 = (idx0 + 1) & (SIN_LUT_SIZE - 1);
+    float frac = fIdx - std::floor(fIdx);
+    return s_sinLut[idx0] + frac * (s_sinLut[idx1] - s_sinLut[idx0]);
 }
 
+// Smooth asymptotic saturation (never hard-clamps flat like polynomial > 1.5)
 static inline float fastSoftClip(float x) {
-    if (x > 1.5f) return 1.0f;
-    if (x < -1.5f) return -1.0f;
-    float x2 = x * x;
-    return x * (27.0f + x2) / (27.0f + 9.0f * x2);
+    return std::tanh(x);
 }
 
 static inline float midiToFreq(uint8_t midiNote) {
@@ -100,6 +102,53 @@ void TavernReverb::process(float inMono, float& outL, float& outR) {
     if (++iAp >= AP_LEN) iAp = 0;
 }
 
+// ---- Stereo Biquad EQ (3DS Speaker Voicing) ----
+
+void StereoBiquad::resetState() {
+    z1L = z2L = z1R = z2R = 0.0f;
+}
+
+void StereoBiquad::setHighPass(float freqHz, float q, float sampleRate) {
+    float w0 = TWO_PI * freqHz / sampleRate;
+    float cosw = std::cos(w0);
+    float sinw = std::sin(w0);
+    float alpha = sinw / (2.0f * q);
+    float invA0 = 1.0f / (1.0f + alpha);
+    b0 = ((1.0f + cosw) * 0.5f) * invA0;
+    b1 = (-(1.0f + cosw)) * invA0;
+    b2 = ((1.0f + cosw) * 0.5f) * invA0;
+    a1 = (-2.0f * cosw) * invA0;
+    a2 = (1.0f - alpha) * invA0;
+    resetState();
+}
+
+void StereoBiquad::setPeaking(float freqHz, float q, float gainDb, float sampleRate) {
+    float w0 = TWO_PI * freqHz / sampleRate;
+    float cosw = std::cos(w0);
+    float sinw = std::sin(w0);
+    float alpha = sinw / (2.0f * q);
+    float A = std::pow(10.0f, gainDb / 40.0f);
+    float invA0 = 1.0f / (1.0f + alpha / A);
+    b0 = (1.0f + alpha * A) * invA0;
+    b1 = (-2.0f * cosw) * invA0;
+    b2 = (1.0f - alpha * A) * invA0;
+    a1 = (-2.0f * cosw) * invA0;
+    a2 = (1.0f - alpha / A) * invA0;
+    resetState();
+}
+
+void StereoBiquad::process(float& l, float& r) {
+    float outL = b0 * l + z1L;
+    z1L = b1 * l - a1 * outL + z2L;
+    z2L = b2 * l - a2 * outL;
+    l = outL;
+
+    float outR = b0 * r + z1R;
+    z1R = b1 * r - a1 * outR + z2R;
+    z2R = b2 * r - a2 * outR;
+    r = outR;
+}
+
 // ---- SynthVoices ----
 
 void SynthVoices::loadWaveTable(const char* path, int16_t** outData, uint32_t* outLen) {
@@ -127,12 +176,40 @@ void SynthVoices::init() {
     initSinLut();
     std::memset(voices_, 0, sizeof(voices_));
     reverb_.reset();
+    speakerHpf_.setHighPass(135.0f, 0.707f, BB_SAMPLE_RATE);
+    speakerPresence_.setPeaking(1800.0f, 1.1f, 2.8f, BB_SAMPLE_RATE);
+    masterVol_ = 1.0f;
+    speakerMode_ = true;
+    std::memset(instTrimPct_, 0, sizeof(instTrimPct_));
+    compEnv_ = 0.0f;
+    metroPhase_ = 0.0f;
+    metroFreq_ = 1040.0f;
+    metroEnv_ = 0.0f;
     loadWaveTable("romfs:/audio/lute_tbl.bin", &luteTbl_, &luteLen_);
     loadWaveTable("romfs:/audio/harp_tbl.bin", &harpTbl_, &harpLen_);
     loadWaveTable("romfs:/audio/bass_tbl.bin", &bassTbl_, &bassLen_);
     vibPhase_ = 0.0f;
     smoothedLiveBend_ = 0.0f;
     lastPeak_ = 0.0f;
+}
+
+void SynthVoices::setMasterConfig(uint8_t masterVolPct, bool speakerMode, const int8_t instTrimPct[INST_COUNT]) {
+    if (masterVolPct > 150) masterVolPct = 150;
+    masterVol_ = static_cast<float>(masterVolPct) * 0.01f;
+    if (speakerMode_ != speakerMode) {
+        speakerMode_ = speakerMode;
+        speakerHpf_.resetState();
+        speakerPresence_.resetState();
+    }
+    if (instTrimPct) {
+        std::memcpy(instTrimPct_, instTrimPct, INST_COUNT);
+    }
+}
+
+void SynthVoices::triggerMetronome(bool accented) {
+    metroPhase_ = 0.0f;
+    metroFreq_ = accented ? 1480.0f : 1040.0f;
+    metroEnv_  = accented ? 0.42f : 0.28f;
 }
 
 void SynthVoices::shutdown() {
@@ -175,12 +252,33 @@ int SynthVoices::allocateVoice(int trackIdx, uint8_t midiNote, uint8_t instrumen
     return (bestSame >= 0) ? bestSame : bestAny;
 }
 
+// Base RMS-balanced gain per instrument (calibrated for 3DS speakers & headphones)
+static constexpr float INST_BASE_GAIN[INST_COUNT] = {
+    0.72f, // INST_TAVERN_KIT
+    0.68f, // INST_CHIP_KIT
+    0.84f, // INST_UPRIGHT_BASS
+    0.76f, // INST_SUB_BASS
+    0.92f, // INST_OCARINA (warm presence boost so solo melodies cut cleanly)
+    0.66f, // INST_PULSE_LEAD
+    0.86f, // INST_LUTE
+    0.90f, // INST_HARP
+    0.72f, // INST_WAR_KIT
+    0.70f, // INST_LOFI_KIT
+    0.80f, // INST_ELEC_BASS
+    0.90f, // INST_WOOD_FLUTE
+    0.68f, // INST_SYNTH_BRASS
+    0.78f, // INST_ELEC_GUITAR
+    0.84f, // INST_TAVERN_PIANO
+    0.82f  // INST_ELEC_KEYS
+};
+
 void SynthVoices::triggerNote(int trackIdx, uint8_t instrumentId, uint8_t midiNote,
                               uint8_t velocity, float stepBendSemis, int gateSamples, bool isLive) {
     if (midiNote == 0 || velocity == 0) return;
 
     int idx = allocateVoice(trackIdx, midiNote, instrumentId);
     Voice& v = voices_[idx];
+    float prevOut = v.active ? v.lastSample : 0.0f;
     std::memset(&v, 0, sizeof(Voice));
     v.active = true;
     v.trackIdx = static_cast<uint8_t>(trackIdx);
@@ -190,12 +288,19 @@ void SynthVoices::triggerNote(int trackIdx, uint8_t instrumentId, uint8_t midiNo
     v.isLiveNote = isLive;
     v.envStage = ENV_ATTACK;
     v.envLevel = 0.0f;
-    v.gain = (static_cast<float>(velocity) / 127.0f) * 0.78f;
+    float baseInstGain = (instrumentId < INST_COUNT) ? INST_BASE_GAIN[instrumentId] : 0.78f;
+    int8_t trimPct = (instrumentId < INST_COUNT) ? instTrimPct_[instrumentId] : 0;
+    float trimMult = 1.0f + static_cast<float>(trimPct) * 0.01f;
+    if (trimMult < 0.25f) trimMult = 0.25f;
+    if (trimMult > 1.75f) trimMult = 1.75f;
+    v.gain = (static_cast<float>(velocity) / 127.0f) * baseInstGain * trimMult;
     v.baseFreq = midiToFreq(midiNote);
     v.phaseInc = v.baseFreq / BB_SAMPLE_RATE;
     v.notePitchMult = (stepBendSemis != 0.0f) ? std::pow(2.0f, stepBendSemis / 12.0f) : 1.0f;
     v.rngState = 0x9E3779B9u ^ (static_cast<uint32_t>(idx + 1) * 2654435761u) ^ (midiNote * 7919u);
     v.samplesRemaining = gateSamples;
+    v.stealPrevSample = prevOut;
+    v.stealFade = (std::fabs(prevOut) > 0.0001f) ? 1.0f : 0.0f;
 
     // Precompute multiplicative per-sample decay coefficients (zero std::exp in render loop!)
     v.drumAmpEnv   = 1.0f;
@@ -276,6 +381,8 @@ void SynthVoices::stopAll() {
         voices_[i].active = false;
         voices_[i].envStage = ENV_OFF;
     }
+    compEnv_ = 0.0f;
+    metroEnv_ = 0.0f;
 }
 
 float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
@@ -306,9 +413,11 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
             }
             case DRUM_TOM: {
                 float sweepFreq = (war ? 78.0f : 105.0f) + (war ? 75.0f : 100.0f) * v.drumPitchEnv;
-                v.phase += sweepFreq * (1.0f / BB_SAMPLE_RATE);
+                v.phase  += sweepFreq * (1.0f / BB_SAMPLE_RATE);
                 if (v.phase >= 1.0f) v.phase -= 1.0f;
-                float skin = fastSin(v.phase) + (war ? 0.34f : 0.22f) * fastSin(v.phase * 1.59f);
+                v.phase2 += (sweepFreq * 1.59f) * (1.0f / BB_SAMPLE_RATE);
+                if (v.phase2 >= 1.0f) v.phase2 -= 1.0f;
+                float skin = fastSin(v.phase) + (war ? 0.34f : 0.22f) * fastSin(v.phase2);
                 raw = skin * v.drumAmpEnv * 0.90f;
                 v.drumAmpEnv   *= v.drumAmpDecay;
                 v.drumPitchEnv *= v.drumPitchDecay;
@@ -382,7 +491,14 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
             }
         }
         v.ageSamples++;
-        return raw * v.gain;
+        float out = raw * v.gain;
+        if (v.stealFade > 0.0f) {
+            out += v.stealPrevSample * v.stealFade;
+            v.stealFade -= (1.0f / 82.0f); // 2.5 ms linear fade-out
+            if (v.stealFade < 0.0f) v.stealFade = 0.0f;
+        }
+        v.lastSample = out;
+        return out;
     }
 
     // ---- Melodic & Harmonic Instruments ----
@@ -600,7 +716,14 @@ float SynthVoices::renderVoiceSample(Voice& v, float livePitchMult) {
     }
 
     v.ageSamples++;
-    return raw * v.envLevel * v.gain;
+    float out = raw * v.envLevel * v.gain;
+    if (v.stealFade > 0.0f) {
+        out += v.stealPrevSample * v.stealFade;
+        v.stealFade -= (1.0f / 82.0f); // 2.5 ms linear fade-out
+        if (v.stealFade < 0.0f) v.stealFade = 0.0f;
+    }
+    v.lastSample = out;
+    return out;
 }
 
 void SynthVoices::render(int16_t* outStereo, int numSamples, float liveBendSemis, float liveVibrato,
@@ -612,6 +735,13 @@ void SynthVoices::render(int16_t* outStereo, int numSamples, float liveBendSemis
     static constexpr float PAN_L[BB_NUM_TRACKS]    = { 1.00f, 1.00f, 0.86f, 1.12f };
     static constexpr float PAN_R[BB_NUM_TRACKS]    = { 1.00f, 1.00f, 1.12f, 0.86f };
     static constexpr float REV_SEND[BB_NUM_TRACKS] = { 0.14f, 0.04f, 0.26f, 0.24f };
+
+    // Master bus compressor/limiter constants (~0.8 ms attack, ~65 ms release at 32.7 kHz)
+    constexpr float COMP_ATK   = 0.038f;
+    constexpr float COMP_REL   = 0.00048f;
+    constexpr float COMP_THR   = 0.56f;
+    constexpr float COMP_RATIO = 4.5f;
+    const float preGain = 1.32f * masterVol_;
 
     float livePitchMult = 1.0f;
 
@@ -647,9 +777,43 @@ void SynthVoices::render(int16_t* outStereo, int numSamples, float liveBendSemis
         float wetL = 0.0f, wetR = 0.0f;
         reverb_.process(revIn, wetL, wetR);
 
-        constexpr float MASTER_GAIN = 2.15f;
-        float mixL = fastSoftClip((dryL + wetL * reverbMix) * MASTER_GAIN);
-        float mixR = fastSoftClip((dryR + wetR * reverbMix) * MASTER_GAIN);
+        float mixL = dryL + wetL * reverbMix;
+        float mixR = dryR + wetR * reverbMix;
+
+        // Pre-limiter woodblock metronome (never hard-clips integer PCM)
+        if (metroEnv_ > 0.001f) {
+            float clk = fastSin(metroPhase_) * metroEnv_;
+            metroPhase_ += metroFreq_ * (1.0f / BB_SAMPLE_RATE);
+            if (metroPhase_ >= 1.0f) metroPhase_ -= 1.0f;
+            metroEnv_ *= 0.991f;
+            mixL += clk;
+            mixR += clk;
+        }
+
+        // 3DS Speaker Voicing: 135 Hz Butterworth HPF (eliminates cone rattle) + 1.8 kHz presence
+        if (speakerMode_) {
+            speakerHpf_.process(mixL, mixR);
+            speakerPresence_.process(mixL, mixR);
+        }
+
+        mixL *= preGain;
+        mixR *= preGain;
+
+        // Stereo-linked Master Bus Envelope Compressor / Limiter
+        float instPeak = std::max(std::fabs(mixL), std::fabs(mixR));
+        float coeff = (instPeak > compEnv_) ? COMP_ATK : COMP_REL;
+        compEnv_ += coeff * (instPeak - compEnv_);
+
+        float compGain = 1.0f;
+        if (compEnv_ > COMP_THR) {
+            float over = compEnv_ - COMP_THR;
+            float target = COMP_THR + over / COMP_RATIO;
+            compGain = target / compEnv_;
+        }
+
+        // Smooth asymptotic safety ceiling (~0.96 max, zero flat-top clipping)
+        mixL = std::tanh(mixL * compGain * 1.05f) * 0.96f;
+        mixR = std::tanh(mixR * compGain * 1.05f) * 0.96f;
 
         float absMax = std::max(std::fabs(mixL), std::fabs(mixR));
         if (absMax > peak) peak = absMax;

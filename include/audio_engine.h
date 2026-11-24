@@ -42,8 +42,19 @@ int   audioEngineGetCurrentStep();
 float audioEngineGetStepFraction();
 float audioEngineGetPeakLevel();
 
-// Metronome click toggle (v0.3.0)
+// Metronome click & 4-beat count-in (v0.3.0 / v0.7.0)
 void  audioEngineSetMetronome(bool enabled);
 bool  audioEngineGetMetronome();
+void  audioEngineStartCountIn(int beats = 4);
+void  audioEngineCancelCountIn();
+bool  audioEngineIsCountingIn();
+int   audioEngineGetCountInBeatRemaining();
+bool  audioEngineConsumeCountInFinished();
+
+// Master volume, per-instrument trim, and Auto Speaker/Headphone EQ (v0.7.0)
+void  audioEngineSetMasterConfig(uint8_t masterVolPct, uint8_t audioOutMode, const int8_t instTrimPct[INST_COUNT]);
+void  audioEnginePollHeadphones();
+bool  audioEngineIsHeadphonesInserted();
+bool  audioEngineIsSpeakerVoicingActive();
 
 } // namespace BardBeats

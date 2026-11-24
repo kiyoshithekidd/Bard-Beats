@@ -77,7 +77,9 @@ int main(int argc, char* argv[]) {
 
         if (isJustPressed) {
             if (!BardBeats::uiHandleBottomChromeTouch(state, tx, ty)) {
-                if (state.showInstPicker) {
+                if (state.showHelpOverlay) {
+                    BardBeats::uiHandleHelpOverlayTouch(state, tx, ty);
+                } else if (state.showInstPicker) {
                     BardBeats::uiHandleInstPickerTouch(state, tx, ty);
                 } else if (state.showMixDrawer) {
                     BardBeats::uiHandleMixDrawerTouch(state, tx, ty, true, true);
@@ -102,14 +104,19 @@ int main(int argc, char* argv[]) {
                 }
             }
         } else if (isTouching && wasTouching) {
-            if (state.showMixDrawer) {
+            if (BardBeats::uiHandleBottomChromeDrag(state, tx, ty)) {
+                // Handled inline track-tab drag volume
+            } else if (state.showMixDrawer) {
                 BardBeats::uiHandleMixDrawerTouch(state, tx, ty, false, true);
-            } else if (state.activeView == BardBeats::VIEW_GRID) {
-                BardBeats::viewGridHandleTouch(state, tx, ty, false, true, false);
-            } else if (state.activeView == BardBeats::VIEW_INSTRUMENT) {
-                BardBeats::viewInstrumentHandleTouch(state, tx, ty, false, true, false);
+            } else if (!state.showHelpOverlay && !state.showInstPicker) {
+                if (state.activeView == BardBeats::VIEW_GRID) {
+                    BardBeats::viewGridHandleTouch(state, tx, ty, false, true, false);
+                } else if (state.activeView == BardBeats::VIEW_INSTRUMENT) {
+                    BardBeats::viewInstrumentHandleTouch(state, tx, ty, false, true, false);
+                }
             }
         } else if (isReleased) {
+            BardBeats::uiResetBottomChromeDrag();
             if (state.activeView == BardBeats::VIEW_GRID) {
                 BardBeats::viewGridHandleTouch(state, tx, ty, false, false, true);
             } else if (state.activeView == BardBeats::VIEW_PADS) {
@@ -141,7 +148,9 @@ int main(int argc, char* argv[]) {
         C2D_TargetClear(bot, BardBeats::Colors::BG_DARK);
         C2D_SceneBegin(bot);
         BardBeats::uiDrawBottomChrome(state);
-        if (state.showInstPicker) {
+        if (state.showHelpOverlay) {
+            BardBeats::uiDrawHelpOverlay(state);
+        } else if (state.showInstPicker) {
             BardBeats::uiDrawInstPicker(state);
         } else if (state.showMixDrawer) {
             BardBeats::uiDrawMixDrawer(state);
@@ -158,6 +167,7 @@ int main(int argc, char* argv[]) {
         C3D_FrameEnd(0);
     }
 
+    state.saveConfig();
     BardBeats::wifiMidiExit();
     BardBeats::micRecorderExit();
     BardBeats::audioEngineExit();

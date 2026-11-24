@@ -50,6 +50,11 @@ struct Voice {
     uint32_t ageSamples;
     uint32_t rngState;
     int      samplesRemaining;
+
+    // Anti-click voice stealing crossfade state
+    float    lastSample;
+    float    stealPrevSample;
+    float    stealFade;
 };
 
 // Lightweight Tavern Room Stereo Reverb (2 comb + 1 all-pass per channel, fast on ARM11)
@@ -73,10 +78,23 @@ struct TavernReverb {
     void process(float inMono, float& outL, float& outR);
 };
 
+struct StereoBiquad {
+    float b0, b1, b2, a1, a2;
+    float z1L, z2L, z1R, z2R;
+
+    void resetState();
+    void setHighPass(float freqHz, float q, float sampleRate);
+    void setPeaking(float freqHz, float q, float gainDb, float sampleRate);
+    void process(float& l, float& r);
+};
+
 class SynthVoices {
 public:
     void init();
     void shutdown();
+
+    void setMasterConfig(uint8_t masterVolPct, bool speakerMode, const int8_t instTrimPct[INST_COUNT]);
+    void triggerMetronome(bool accented);
 
     void triggerNote(int trackIdx, uint8_t instrumentId, uint8_t midiNote,
                      uint8_t velocity, float stepBendSemis, int gateSamples, bool isLive);
@@ -100,6 +118,20 @@ private:
     uint32_t bassLen_ = 0;
 
     TavernReverb reverb_;
+    StereoBiquad speakerHpf_;
+    StereoBiquad speakerPresence_;
+    float masterVol_ = 1.0f;
+    bool  speakerMode_ = true;
+    int8_t instTrimPct_[INST_COUNT] = {0};
+
+    // Master bus compressor/limiter envelope state
+    float compEnv_ = 0.0f;
+
+    // Pre-limiter woodblock metronome state
+    float metroPhase_ = 0.0f;
+    float metroFreq_ = 1040.0f;
+    float metroEnv_ = 0.0f;
+
     float vibPhase_ = 0.0f;
     float smoothedLiveBend_ = 0.0f;
     float lastPeak_ = 0.0f;

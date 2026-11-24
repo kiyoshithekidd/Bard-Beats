@@ -60,6 +60,8 @@ void uiDrawTopFourTrackOverview(const AppState& state, float yStart, float heigh
 // Bottom-screen persistent bars (Transport y:0..34, Track Bar y:36..66, Nav Tabs y:206..240)
 void uiDrawBottomChrome(const AppState& state);
 bool uiHandleBottomChromeTouch(AppState& state, float tx, float ty);
+bool uiHandleBottomChromeDrag(AppState& state, float tx, float ty);
+void uiResetBottomChromeDrag();
 
 // Mix & Settings Drawer (y: 66..206)
 void uiDrawMixDrawer(const AppState& state);
@@ -68,5 +70,9 @@ bool uiHandleMixDrawerTouch(AppState& state, float tx, float ty, bool isJustPres
 // Instrument Picker Drawer (y: 66..206) (#20)
 void uiDrawInstPicker(const AppState& state);
 bool uiHandleInstPickerTouch(AppState& state, float tx, float ty);
+
+// Controls Cheat-Sheet Scroll Overlay (v0.7.0)
+void uiDrawHelpOverlay(const AppState& state);
+bool uiHandleHelpOverlayTouch(AppState& state, float tx, float ty);
 
 } // namespace BardBeats

@@ -94,18 +94,25 @@ void uiDrawTopHeader(const AppState& state) {
     const char* title = inSong ? state.currentSong.name : state.currentLoop.name;
     uiDrawText(10.0f + d, 7.0f, 0.50f, 0.50f, Colors::GOLD_TEXT, title);
 
-    char infoBuf[48];
+    char infoBuf[56];
+    const char* eqTag = audioEngineIsSpeakerVoicingActive() ? "SPK" : "HDP";
     if (inSong) {
-        std::snprintf(infoBuf, sizeof(infoBuf), "%u BPM | %d Bars",
-                      state.currentSong.bpm, state.getTotalSongBars());
+        std::snprintf(infoBuf, sizeof(infoBuf), "%u BPM | %dB | %s",
+                      state.currentSong.bpm, state.getTotalSongBars(), eqTag);
     } else {
-        std::snprintf(infoBuf, sizeof(infoBuf), "%u BPM | %s%s",
+        std::snprintf(infoBuf, sizeof(infoBuf), "%u BPM | %s%s | %s",
                       state.currentLoop.bpm, getScaleName(state.currentLoop.scaleId),
-                      state.currentLoop.numBars == 2 ? " 2B" : "");
+                      state.currentLoop.numBars == 2 ? " 2B" : "", eqTag);
     }
-    uiDrawText(186.0f + d, 9.0f, 0.43f, 0.43f, Colors::CREAM_TEXT, infoBuf);
+    uiDrawText(166.0f + d, 9.0f, 0.40f, 0.40f, Colors::CREAM_TEXT, infoBuf);
 
-    if (state.isRecordingVocal) {
+    if (audioEngineIsCountingIn()) {
+        int rem = audioEngineGetCountInBeatRemaining();
+        char cntBuf[20];
+        std::snprintf(cntBuf, sizeof(cntBuf), "COUNT %d", rem);
+        C2D_DrawRectSolid(314.0f + d, 5.0f, 0.25f, 78.0f, 22.0f, Colors::AMBER_JAM);
+        uiDrawTextCentered({314.0f + d, 5.0f, 78.0f, 22.0f}, 0.42f, Colors::BG_DARK, cntBuf);
+    } else if (state.isRecordingVocal) {
         float lvl = micRecorderGetLiveLevel();
         C2D_DrawRectSolid(314.0f + d, 6.0f, 0.25f, 78.0f, 22.0f, Colors::RED_REC);
         C2D_DrawRectSolid(316.0f + d, 24.0f, 0.3f, 74.0f * lvl, 3.0f, Colors::PLAYHEAD_LINE);
@@ -186,15 +193,25 @@ static constexpr Rect BTN_UNDO  = {162.0f, 2.0f, 74.0f, 32.0f };
 static constexpr Rect BTN_SAVE  = {240.0f, 2.0f, 76.0f, 32.0f };
 static constexpr Rect BTN_MIC   = {264.0f, 38.0f, 52.0f, 26.0f };
 
+static int   s_dragTrackIdx = -1;
+static float s_dragStartX = 0.0f;
+static uint8_t s_dragStartVol = 85;
+static bool  s_dragMoved = false;
+
+void uiResetBottomChromeDrag() {
+    s_dragTrackIdx = -1;
+    s_dragMoved = false;
+}
+
 void uiDrawBottomChrome(const AppState& state) {
     bool inSong = (state.activeView == VIEW_SONG);
 
     C2D_DrawRectSolid(0, 0, 0.05f, 320.0f, 36.0f, Colors::BG_PANEL);
 
     uiDrawButton(BTN_PLAY,
-                 state.isPlaying ? Colors::GREEN_PLAY : Colors::BG_CARD,
+                 (state.isPlaying || audioEngineIsCountingIn()) ? Colors::GREEN_PLAY : Colors::BG_CARD,
                  Colors::BORDER_WOOD, Colors::CREAM_TEXT,
-                 state.isPlaying ? "STOP" : "PLAY", 0.46f);
+                 (state.isPlaying || audioEngineIsCountingIn()) ? "STOP" : "PLAY", 0.46f);
 
     if (inSong) {
         uiDrawButton(BTN_REC,
@@ -222,23 +239,41 @@ void uiDrawBottomChrome(const AppState& state) {
     }
 
     C2D_DrawRectSolid(0, 36.0f, 0.05f, 320.0f, 30.0f, Colors::BG_DARK);
+    const LoopFile& dispLoop = inSong ? state.songSlotLoopCache : state.currentLoop;
+    uint8_t songMuteMask = 0;
+    if (inSong && state.currentSong.numEntries > 0 && state.selectedSongSlot < state.currentSong.numEntries) {
+        songMuteMask = state.currentSong.chain[state.selectedSongSlot].muteMask;
+    }
+
     float tabW = 63.0f;
     for (int t = 0; t < BB_NUM_TRACKS; ++t) {
         Rect tr = { 4.0f + t * 65.0f, 38.0f, tabW, 26.0f };
         bool active = (t == state.activeTrack) && !inSong;
-        bool muted = (state.currentLoop.tracks[t].muted != 0);
+        bool muted = inSong
+            ? ((dispLoop.tracks[t].muted != 0) || ((songMuteMask & (1u << t)) != 0))
+            : (dispLoop.tracks[t].muted != 0);
         uint32_t bg = active ? Colors::BG_CARD_ALT : Colors::BG_PANEL;
         uint32_t border = active ? Colors::TRACK_COLORS[t] : Colors::BORDER_WOOD;
         uint32_t txtCol = muted ? Colors::MUTED_TEXT : (active ? Colors::CREAM_TEXT : Colors::TRACK_COLORS[t]);
 
         uiDrawButton(tr, bg, border, txtCol, "", 0.38f);
-        Rect muteBox = { tr.x + 2.0f, tr.y + 3.0f, 14.0f, 20.0f };
+        Rect muteBox = { tr.x + 2.0f, tr.y + 2.0f, 14.0f, 18.0f };
         C2D_DrawRectSolid(muteBox.x, muteBox.y, 0.16f, muteBox.w, muteBox.h,
                           muted ? Colors::RED_REC : Colors::BG_DARK);
         uiDrawTextCentered(muteBox, 0.38f, muted ? Colors::CREAM_TEXT : Colors::MUTED_TEXT, "M");
-        Rect instBox = { tr.x + 16.0f, tr.y, tr.w - 17.0f, tr.h };
+        Rect instBox = { tr.x + 16.0f, tr.y, tr.w - 17.0f, tr.h - 4.0f };
         uiDrawTextCentered(instBox, 0.38f, txtCol,
-                           getInstrumentShortName(state.currentLoop.tracks[t].instrumentId));
+                           getInstrumentShortName(dispLoop.tracks[t].instrumentId));
+
+        // Inline live track volume meter along bottom edge of each Track Tab (0..200%)
+        uint8_t vol = dispLoop.tracks[t].volume;
+        if (vol > 200) vol = 200;
+        float barW = (static_cast<float>(vol) / 200.0f) * (tr.w - 4.0f);
+        C2D_DrawRectSolid(tr.x + 2.0f, tr.y + tr.h - 4.0f, 0.18f, tr.w - 4.0f, 2.5f, Colors::BG_DARK);
+        uint32_t vCol = muted ? Colors::MUTED_TEXT : (vol > 100 ? Colors::GOLD_TEXT : Colors::TRACK_COLORS[t]);
+        if (barW > 0.5f) {
+            C2D_DrawRectSolid(tr.x + 2.0f, tr.y + tr.h - 4.0f, 0.22f, barW, 2.5f, vCol);
+        }
     }
 
     bool hasVoc = inSong ? (state.currentSong.hasSongVocal != 0) : (state.currentLoop.hasVocalClip != 0);
@@ -261,6 +296,8 @@ void uiDrawBottomChrome(const AppState& state) {
 
 bool uiHandleBottomChromeTouch(AppState& state, float tx, float ty) {
     bool inSong = (state.activeView == VIEW_SONG);
+    s_dragTrackIdx = -1;
+    s_dragMoved = false;
 
     if (BTN_PLAY.contains(tx, ty)) {
         state.togglePlay();
@@ -294,26 +331,35 @@ bool uiHandleBottomChromeTouch(AppState& state, float tx, float ty) {
             }
             return true;
         }
-        if (!inSong) {
-            for (int t = 0; t < BB_NUM_TRACKS; ++t) {
-                Rect tr = { 4.0f + t * 65.0f, 38.0f, 63.0f, 26.0f };
-                if (tr.contains(tx, ty)) {
-                    if (tx < tr.x + 18.0f) {
-                        state.currentLoop.tracks[t].muted = state.currentLoop.tracks[t].muted ? 0 : 1;
-                        state.syncAudioLoop();
-                        char buf[48];
-                        std::snprintf(buf, sizeof(buf), "%s: %s",
-                                      getTrackRoleName(t),
-                                      state.currentLoop.tracks[t].muted ? "MUTED" : "UNMUTED");
-                        state.setToast(buf, 70);
-                    } else if (state.activeTrack == t) {
+        for (int t = 0; t < BB_NUM_TRACKS; ++t) {
+            Rect tr = { 4.0f + t * 65.0f, 38.0f, 63.0f, 26.0f };
+            if (tr.contains(tx, ty)) {
+                if (inSong) {
+                    state.toggleSongSlotTrackMute(state.selectedSongSlot, t);
+                    return true;
+                }
+                if (tx < tr.x + 18.0f) {
+                    state.currentLoop.tracks[t].muted = state.currentLoop.tracks[t].muted ? 0 : 1;
+                    state.syncAudioLoop();
+                    char buf[48];
+                    std::snprintf(buf, sizeof(buf), "%s: %s",
+                                  getTrackRoleName(t),
+                                  state.currentLoop.tracks[t].muted ? "MUTED" : "UNMUTED");
+                    state.setToast(buf, 70);
+                } else {
+                    s_dragTrackIdx = t;
+                    s_dragStartX = tx;
+                    s_dragStartVol = state.currentLoop.tracks[t].volume;
+                    s_dragMoved = false;
+                    if (state.activeTrack == t) {
                         state.showInstPicker = !state.showInstPicker;
                         state.showMixDrawer = false;
+                        state.showHelpOverlay = false;
                     } else {
                         state.activeTrack = t;
                     }
-                    return true;
                 }
+                return true;
             }
         }
     }
@@ -323,6 +369,7 @@ bool uiHandleBottomChromeTouch(AppState& state, float tx, float ty) {
             Rect nr = { 2.0f + i * 63.5f, 209.0f, 61.5f, 29.0f };
             if (nr.contains(tx, ty)) {
                 state.showInstPicker = false;
+                state.showHelpOverlay = false;
                 state.switchView(static_cast<ViewMode>(i));
                 return true;
             }
@@ -331,89 +378,158 @@ bool uiHandleBottomChromeTouch(AppState& state, float tx, float ty) {
     return false;
 }
 
-// ---- Mix & Settings Drawer (#4 & #6) ----
+bool uiHandleBottomChromeDrag(AppState& state, float tx, float ty) {
+    (void)ty;
+    if (s_dragTrackIdx < 0 || s_dragTrackIdx >= BB_NUM_TRACKS) return false;
+    float dx = tx - s_dragStartX;
+    if (!s_dragMoved && (dx > 6.0f || dx < -6.0f)) {
+        s_dragMoved = true;
+        state.showInstPicker = false;
+    }
+    if (!s_dragMoved) return false;
+
+    int newVol = static_cast<int>(s_dragStartVol) + static_cast<int>(dx * 1.8f);
+    if (newVol < 0) newVol = 0;
+    if (newVol > 200) newVol = 200;
+    state.currentLoop.tracks[s_dragTrackIdx].volume = static_cast<uint8_t>(newVol);
+    state.syncAudioLoop();
+    char buf[56];
+    std::snprintf(buf, sizeof(buf), "%s Vol: %d%%",
+                  getTrackRoleName(s_dragTrackIdx), newVol);
+    state.setToast(buf, 55);
+    return true;
+}
+
+// ---- Mix & Settings Drawer (#4, #6, #23) ----
 
 static void drawSliderRow(float y, const char* label, uint8_t value, uint32_t fillCol, bool muted = false, uint8_t maxVal = 100) {
-    uiDrawText(8.0f, y + 1.0f, 0.38f, 0.38f, muted ? Colors::RED_REC : Colors::CREAM_TEXT, label);
-    Rect bar = { 76.0f, y + 2.0f, 196.0f, 14.0f };
+    uiDrawText(8.0f, y, 0.38f, 0.38f, muted ? Colors::RED_REC : Colors::CREAM_TEXT, label);
+    Rect bar = { 74.0f, y + 1.0f, 198.0f, 12.0f };
     C2D_DrawRectSolid(bar.x, bar.y, 0.1f, bar.w, bar.h, Colors::BG_DARK);
     uint8_t clamped = (value > maxVal) ? maxVal : value;
     float w = (static_cast<float>(clamped) / static_cast<float>(maxVal)) * bar.w;
     uint32_t barCol = muted ? Colors::MUTED_TEXT : ((maxVal > 100 && clamped > 100) ? Colors::GOLD_TEXT : fillCol);
     C2D_DrawRectSolid(bar.x, bar.y, 0.15f, w, bar.h, barCol);
     if (maxVal > 100) {
-        // 100% unity gain reference tick at midpoint
-        C2D_DrawRectSolid(bar.x + bar.w * 0.5f, bar.y, 0.2f, 1.5f, bar.h, Colors::CREAM_TEXT);
+        float unityX = bar.x + bar.w * (100.0f / static_cast<float>(maxVal));
+        C2D_DrawRectSolid(unityX, bar.y, 0.2f, 1.5f, bar.h, Colors::CREAM_TEXT);
     }
     char valBuf[12];
     std::snprintf(valBuf, sizeof(valBuf), "%u%%", clamped);
-    uiDrawText(276.0f, y + 1.0f, 0.38f, 0.38f, (maxVal > 100 && clamped > 100) ? Colors::GOLD_TEXT : Colors::CREAM_TEXT, valBuf);
+    uiDrawText(276.0f, y, 0.38f, 0.38f, (maxVal > 100 && clamped > 100) ? Colors::GOLD_TEXT : Colors::CREAM_TEXT, valBuf);
 }
 
 void uiDrawMixDrawer(const AppState& state) {
     C2D_DrawRectSolid(2.0f, 67.0f, 0.08f, 316.0f, 137.0f, Colors::BG_PANEL);
 
-    drawSliderRow(69.0f,  state.currentLoop.tracks[0].muted ? "[M]Drm" : "Drums",   state.currentLoop.tracks[0].volume, Colors::TRACK_COLORS[0], state.currentLoop.tracks[0].muted != 0, 200);
-    drawSliderRow(86.0f,  state.currentLoop.tracks[1].muted ? "[M]Bas" : "Bass",    state.currentLoop.tracks[1].volume, Colors::TRACK_COLORS[1], state.currentLoop.tracks[1].muted != 0, 200);
-    drawSliderRow(103.0f, state.currentLoop.tracks[2].muted ? "[M]Mel" : "Melody",  state.currentLoop.tracks[2].volume, Colors::TRACK_COLORS[2], state.currentLoop.tracks[2].muted != 0, 200);
-    drawSliderRow(120.0f, state.currentLoop.tracks[3].muted ? "[M]Hrm" : "Harmony", state.currentLoop.tracks[3].volume, Colors::TRACK_COLORS[3], state.currentLoop.tracks[3].muted != 0, 200);
-    bool vocMuted = (state.activeView == VIEW_SONG) ? (state.currentSong.songVocalMuted != 0) : (state.currentLoop.vocalMuted != 0);
-    uint8_t vocVol = (state.activeView == VIEW_SONG) ? state.currentSong.songVocalVolume : state.currentLoop.vocalVolume;
-    drawSliderRow(137.0f, vocMuted ? "[M]Voc" : "Vocal", vocVol, Colors::PURPLE_SPELL, vocMuted, 100);
-    drawSliderRow(154.0f, "Reverb", state.currentLoop.reverbMix, Colors::BLUE_ACTION, false, 100);
+    bool inSong = (state.activeView == VIEW_SONG);
+    const LoopFile& lp = inSong ? state.songSlotLoopCache : state.currentLoop;
 
-    Rect btnKey   = {  6.0f, 175.0f, 66.0f, 26.0f };
-    Rect btnMetro = { 75.0f, 175.0f, 54.0f, 26.0f };
-    Rect btnHpf   = {132.0f, 175.0f, 54.0f, 26.0f };
-    Rect btnMidi  = {189.0f, 175.0f, 58.0f, 26.0f };
-    Rect btnClose = {250.0f, 175.0f, 64.0f, 26.0f };
+    drawSliderRow(69.0f,  lp.tracks[0].muted ? "[M]Drm" : "Drums",   lp.tracks[0].volume, Colors::TRACK_COLORS[0], lp.tracks[0].muted != 0, 200);
+    drawSliderRow(84.0f,  lp.tracks[1].muted ? "[M]Bas" : "Bass",    lp.tracks[1].volume, Colors::TRACK_COLORS[1], lp.tracks[1].muted != 0, 200);
+    drawSliderRow(99.0f,  lp.tracks[2].muted ? "[M]Mel" : "Melody",  lp.tracks[2].volume, Colors::TRACK_COLORS[2], lp.tracks[2].muted != 0, 200);
+    drawSliderRow(114.0f, lp.tracks[3].muted ? "[M]Hrm" : "Harmony", lp.tracks[3].volume, Colors::TRACK_COLORS[3], lp.tracks[3].muted != 0, 200);
 
-    char keyLbl[16];
-    std::snprintf(keyLbl, sizeof(keyLbl), "KEY:%s", getRootNoteName(state.currentLoop.rootNote));
+    bool vocMuted = inSong ? (state.currentSong.songVocalMuted != 0) : (state.currentLoop.vocalMuted != 0);
+    uint8_t vocVol = inSong ? state.currentSong.songVocalVolume : state.currentLoop.vocalVolume;
+    drawSliderRow(129.0f, vocMuted ? "[M]Voc" : "Vocal", vocVol, Colors::PURPLE_SPELL, vocMuted, 100);
+    drawSliderRow(144.0f, "Reverb", lp.reverbMix, Colors::BLUE_ACTION, false, 100);
+
+    // Row 6 (y=159): Left half = Master Vol (0..150%), Right half = Active Instrument Trim (-50..+50%)
+    uiDrawText(8.0f, 159.0f, 0.38f, 0.38f, Colors::GOLD_TEXT, "Mstr");
+    Rect mBar = { 46.0f, 160.0f, 78.0f, 12.0f };
+    C2D_DrawRectSolid(mBar.x, mBar.y, 0.1f, mBar.w, mBar.h, Colors::BG_DARK);
+    float mw = (static_cast<float>(state.config.masterVolume) / 150.0f) * mBar.w;
+    C2D_DrawRectSolid(mBar.x, mBar.y, 0.15f, mw, mBar.h, Colors::GOLD_TEXT);
+    C2D_DrawRectSolid(mBar.x + mBar.w * (100.0f / 150.0f), mBar.y, 0.2f, 1.5f, mBar.h, Colors::CREAM_TEXT);
+    char mBuf[10];
+    std::snprintf(mBuf, sizeof(mBuf), "%u%%", state.config.masterVolume);
+    uiDrawText(126.0f, 159.0f, 0.38f, 0.38f, Colors::CREAM_TEXT, mBuf);
+
+    uint8_t actInst = lp.tracks[state.activeTrack].instrumentId;
+    int8_t trimVal = (actInst < INST_COUNT) ? state.config.instTrimPct[actInst] : 0;
+    uiDrawText(164.0f, 159.0f, 0.38f, 0.38f, Colors::TRACK_COLORS[state.activeTrack], "Trim");
+    Rect tBar = { 198.0f, 160.0f, 76.0f, 12.0f };
+    C2D_DrawRectSolid(tBar.x, tBar.y, 0.1f, tBar.w, tBar.h, Colors::BG_DARK);
+    float tw = (static_cast<float>(trimVal + 50) / 100.0f) * tBar.w;
+    C2D_DrawRectSolid(tBar.x, tBar.y, 0.15f, tw, tBar.h, Colors::TRACK_COLORS[state.activeTrack]);
+    C2D_DrawRectSolid(tBar.x + tBar.w * 0.5f, tBar.y, 0.2f, 1.5f, tBar.h, Colors::CREAM_TEXT);
+    char tBuf[10];
+    std::snprintf(tBuf, sizeof(tBuf), "%+d%%", static_cast<int>(trimVal));
+    uiDrawText(276.0f, 159.0f, 0.38f, 0.38f, Colors::CREAM_TEXT, tBuf);
+
+    // Bottom Settings Row (y=177..202)
+    Rect btnKey   = {   5.0f, 177.0f, 48.0f, 25.0f };
+    Rect btnMetro = {  55.0f, 177.0f, 34.0f, 25.0f };
+    Rect btnOut   = {  91.0f, 177.0f, 54.0f, 25.0f };
+    Rect btnLR    = { 147.0f, 177.0f, 52.0f, 25.0f };
+    Rect btnHpf   = { 201.0f, 177.0f, 34.0f, 25.0f };
+    Rect btnMidi  = { 237.0f, 177.0f, 34.0f, 25.0f };
+    Rect btnClose = { 273.0f, 177.0f, 43.0f, 25.0f };
+
+    char keyLbl[14];
+    std::snprintf(keyLbl, sizeof(keyLbl), "K:%s", getRootNoteName(state.currentLoop.rootNote));
     uiDrawButton(btnKey, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, keyLbl, 0.38f);
     uiDrawButton(btnMetro,
                  state.metronomeEnabled ? Colors::AMBER_JAM : Colors::BG_CARD,
                  Colors::BORDER_WOOD,
                  state.metronomeEnabled ? Colors::BG_DARK : Colors::CREAM_TEXT,
                  "MET", 0.38f);
+    char outLbl[16];
+    std::snprintf(outLbl, sizeof(outLbl), "%s", getAudioOutModeName(state.config.audioOutMode));
+    uiDrawButton(btnOut,
+                 audioEngineIsSpeakerVoicingActive() ? Colors::BLUE_ACTION : Colors::PURPLE_SPELL,
+                 Colors::BORDER_WOOD, Colors::CREAM_TEXT, outLbl, 0.38f);
+    char lrLbl[16];
+    std::snprintf(lrLbl, sizeof(lrLbl), "LR:%s", getShoulderModeName(state.config.shoulderMode));
+    uiDrawButton(btnLR, Colors::BG_CARD_ALT, Colors::GOLD_TEXT, Colors::GOLD_TEXT, lrLbl, 0.38f);
     uiDrawButton(btnHpf,
                  state.currentLoop.vocalHighPass ? Colors::BLUE_ACTION : Colors::BG_CARD,
-                 Colors::BORDER_WOOD, Colors::CREAM_TEXT,
-                 "HPF", 0.38f);
+                 Colors::BORDER_WOOD, Colors::CREAM_TEXT, "HPF", 0.38f);
     uiDrawButton(btnMidi,
                  state.wifiMidiEnabled ? Colors::GREEN_PLAY : Colors::BG_CARD,
-                 Colors::BORDER_WOOD, Colors::CREAM_TEXT,
-                 "MIDI", 0.38f);
+                 Colors::BORDER_WOOD, Colors::CREAM_TEXT, "MID", 0.38f);
     uiDrawButton(btnClose, Colors::BG_CARD_ALT, Colors::GOLD_TEXT, Colors::GOLD_TEXT, "DONE", 0.38f);
 }
 
 bool uiHandleMixDrawerTouch(AppState& state, float tx, float ty, bool isJustPressed, bool isHeld) {
     if (!state.showMixDrawer) return false;
+    bool inSong = (state.activeView == VIEW_SONG);
+    LoopFile& lp = inSong ? state.songSlotLoopCache : state.currentLoop;
 
-    if (isJustPressed && tx < 70.0f && ty >= 69.0f && ty < 154.0f) {
-        int row = static_cast<int>((ty - 69.0f) / 17.0f);
+    if (isJustPressed && tx < 70.0f && ty >= 69.0f && ty < 144.0f) {
+        int row = static_cast<int>((ty - 69.0f) / 15.0f);
         if (row >= 0 && row < 4) {
-            state.currentLoop.tracks[row].muted = state.currentLoop.tracks[row].muted ? 0 : 1;
-            state.syncAudioLoop();
+            if (inSong) {
+                state.toggleSongSlotTrackMute(state.selectedSongSlot, row);
+            } else {
+                lp.tracks[row].muted = lp.tracks[row].muted ? 0 : 1;
+                state.syncAudioLoop();
+            }
         } else if (row == 4) {
-            state.toggleVocalMute(state.activeView == VIEW_SONG);
+            state.toggleVocalMute(inSong);
         }
         return true;
     }
 
-    if ((isJustPressed || isHeld) && tx >= 70.0f && tx <= 278.0f && ty >= 69.0f && ty < 171.0f) {
-        float norm = (tx - 76.0f) / 196.0f;
+    if ((isJustPressed || isHeld) && tx >= 70.0f && tx <= 278.0f && ty >= 69.0f && ty < 158.0f) {
+        float norm = (tx - 74.0f) / 198.0f;
         if (norm < 0.0f) norm = 0.0f;
         if (norm > 1.0f) norm = 1.0f;
 
-        int row = static_cast<int>((ty - 69.0f) / 17.0f);
+        int row = static_cast<int>((ty - 69.0f) / 15.0f);
         if (row >= 0 && row < 4) {
             int pct = static_cast<int>(norm * 200.0f);
-            state.currentLoop.tracks[row].volume = static_cast<uint8_t>(pct);
-            state.syncAudioLoop();
+            lp.tracks[row].volume = static_cast<uint8_t>(pct);
+            if (inSong) {
+                storageSaveLoop(lp);
+                state.syncSongToAudio();
+            } else {
+                state.syncAudioLoop();
+            }
         } else if (row == 4) {
             uint8_t val = static_cast<uint8_t>(norm * 100.0f);
-            if (state.activeView == VIEW_SONG) {
+            if (inSong) {
                 state.currentSong.songVocalVolume = val;
                 audioEngineSetVocalMix(val, state.currentSong.songVocalMuted != 0);
             } else {
@@ -421,32 +537,100 @@ bool uiHandleMixDrawerTouch(AppState& state, float tx, float ty, bool isJustPres
                 audioEngineSetVocalMix(val, state.currentLoop.vocalMuted != 0);
             }
         } else if (row == 5) {
-            state.currentLoop.reverbMix = static_cast<uint8_t>(norm * 100.0f);
-            state.syncAudioLoop();
+            lp.reverbMix = static_cast<uint8_t>(norm * 100.0f);
+            if (inSong) {
+                storageSaveLoop(lp);
+                state.syncSongToAudio();
+            } else {
+                state.syncAudioLoop();
+            }
         }
         return true;
     }
 
-    if (isJustPressed && ty >= 175.0f && ty <= 202.0f) {
-        Rect btnKey   = {  6.0f, 175.0f, 66.0f, 26.0f };
-        Rect btnMetro = { 75.0f, 175.0f, 54.0f, 26.0f };
-        Rect btnHpf   = {132.0f, 175.0f, 54.0f, 26.0f };
-        Rect btnMidi  = {189.0f, 175.0f, 58.0f, 26.0f };
-        Rect btnClose = {250.0f, 175.0f, 64.0f, 26.0f };
+    // Row 6 (y=158..174): Master Vol (left) & Active Instrument Trim (right)
+    if ((isJustPressed || isHeld) && ty >= 158.0f && ty < 175.0f) {
+        if (tx >= 40.0f && tx <= 140.0f) {
+            float norm = (tx - 46.0f) / 78.0f;
+            if (norm < 0.0f) norm = 0.0f;
+            if (norm > 1.0f) norm = 1.0f;
+            state.config.masterVolume = static_cast<uint8_t>(norm * 150.0f);
+            state.syncMasterConfig();
+        } else if (tx >= 192.0f && tx <= 284.0f) {
+            float norm = (tx - 198.0f) / 76.0f;
+            if (norm < 0.0f) norm = 0.0f;
+            if (norm > 1.0f) norm = 1.0f;
+            uint8_t actInst = lp.tracks[state.activeTrack].instrumentId;
+            if (actInst < INST_COUNT) {
+                state.config.instTrimPct[actInst] = static_cast<int8_t>(norm * 100.0f - 50.0f);
+                state.syncMasterConfig();
+            }
+        }
+        return true;
+    }
+
+    if (isJustPressed && ty >= 176.0f && ty <= 203.0f) {
+        Rect btnKey   = {   5.0f, 177.0f, 48.0f, 25.0f };
+        Rect btnMetro = {  55.0f, 177.0f, 34.0f, 25.0f };
+        Rect btnOut   = {  91.0f, 177.0f, 54.0f, 25.0f };
+        Rect btnLR    = { 147.0f, 177.0f, 52.0f, 25.0f };
+        Rect btnHpf   = { 201.0f, 177.0f, 34.0f, 25.0f };
+        Rect btnMidi  = { 237.0f, 177.0f, 34.0f, 25.0f };
+        Rect btnClose = { 273.0f, 177.0f, 43.0f, 25.0f };
 
         if (btnKey.contains(tx, ty)) {
             state.cycleRootKey();
         } else if (btnMetro.contains(tx, ty)) {
             state.toggleMetronome();
+        } else if (btnOut.contains(tx, ty)) {
+            state.cycleAudioOutMode();
+        } else if (btnLR.contains(tx, ty)) {
+            state.cycleShoulderMode();
         } else if (btnHpf.contains(tx, ty)) {
             state.toggleVocalHighPass();
         } else if (btnMidi.contains(tx, ty)) {
             state.toggleWifiMidi();
         } else if (btnClose.contains(tx, ty)) {
+            state.saveConfig();
             state.showMixDrawer = false;
         }
         return true;
     }
+    return true;
+}
+
+// ---- Controls Cheat-Sheet Scroll Overlay (v0.7.0) ----
+
+void uiDrawHelpOverlay(const AppState& state) {
+    C2D_DrawRectSolid(4.0f, 68.0f, 0.30f, 312.0f, 136.0f, Colors::BG_PANEL);
+    C2D_DrawRectSolid(4.0f, 68.0f, 0.32f, 312.0f, 2.0f, Colors::GOLD_TEXT);
+    C2D_DrawRectSolid(4.0f, 202.0f, 0.32f, 312.0f, 2.0f, Colors::GOLD_TEXT);
+
+    uiDrawText(10.0f, 72.0f, 0.42f, 0.42f, Colors::GOLD_TEXT, "BARD BEATS CONTROLS");
+    Rect btnClose = { 254.0f, 71.0f, 58.0f, 19.0f };
+    uiDrawButton(btnClose, Colors::BG_CARD_ALT, Colors::GOLD_TEXT, Colors::GOLD_TEXT, "CLOSE", 0.38f);
+
+    uiDrawText(10.0f, 94.0f,  0.38f, 0.38f, Colors::CREAM_TEXT, "Notes 1-4: D-Pad  < Left, ^ Up, > Right, v Down");
+    uiDrawText(10.0f, 110.0f, 0.38f, 0.38f, Colors::CREAM_TEXT, "Notes 5-8: Face   Y Left, X Up, A Right, B Down");
+    uiDrawText(10.0f, 126.0f, 0.38f, 0.38f, Colors::TRACK_COLORS[2], "Circle Pad: Pitch Bend (+/-2st) | Up = Vibrato");
+
+    const char* lrDesc = (state.config.shoulderMode == SHOULDER_OCTAVE_HOLD)
+        ? "L/R (OCT): Hold L=-1 Oct, R=+1 Oct, L+R=+2 Oct"
+        : (state.config.shoulderMode == SHOULDER_SEMITONE
+            ? "L/R (b/#): Hold L=Flat (-1st), R=Sharp (+1st)"
+            : "L/R (ROLL): Hold L=Sustain, R=16th Accent Roll");
+    uiDrawText(10.0f, 142.0f, 0.38f, 0.38f, Colors::GOLD_TEXT, lrDesc);
+
+    uiDrawText(10.0f, 158.0f, 0.38f, 0.38f, Colors::CREAM_TEXT, "Drag Track Tabs L/R = Quick Volume (0-200%)");
+    uiDrawText(10.0f, 174.0f, 0.38f, 0.38f, Colors::MUTED_TEXT, "Tap Active Tab = Pick Inst | TAP BPM = Tap Tempo");
+    uiDrawText(10.0f, 188.0f, 0.38f, 0.38f, Colors::MUTED_TEXT, "START=Play | SELECT=Spell (Hold=Help) | L+R+ST=Exit");
+}
+
+bool uiHandleHelpOverlayTouch(AppState& state, float tx, float ty) {
+    (void)tx;
+    (void)ty;
+    if (!state.showHelpOverlay) return false;
+    state.showHelpOverlay = false;
     return true;
 }
 

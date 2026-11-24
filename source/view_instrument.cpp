@@ -14,16 +14,16 @@ static int s_lastStrumDeg = -1;
 static constexpr float STAGE_X = 8.0f;
 static constexpr float STAGE_Y = 40.0f;
 
-// 8 dark tone holes on gfx/instruments/ocarina.png (ordered left-to-right)
+// 8 primary tone holes on gfx/instruments/ocarina.png (ordered cleanly left-to-right for scale degrees 0..7)
 static constexpr float OCARINA_HOLES[8][2] = {
-    { 102.0f,  90.0f }, // Deg 0
-    { 132.0f,  82.0f }, // Deg 1
-    { 138.0f, 100.0f }, // Deg 2
-    { 162.0f,  72.0f }, // Deg 3
-    { 188.0f,  55.0f }, // Deg 4
-    { 190.0f, 108.0f }, // Deg 5
-    { 248.0f,  79.0f }, // Deg 6
-    { 279.0f,  77.0f }  // Deg 7
+    { 103.0f,  89.0f }, // Deg 0 (<L)
+    { 132.5f,  83.0f }, // Deg 1 (^U)
+    { 161.5f,  73.0f }, // Deg 2 (>R)
+    { 187.5f,  55.5f }, // Deg 3 (vD)
+    { 188.5f, 107.5f }, // Deg 4 (Y)
+    { 217.0f,  92.0f }, // Deg 5 (X)
+    { 246.0f,  79.5f }, // Deg 6 (A)
+    { 277.5f,  77.0f }  // Deg 7 (B)
 };
 
 // 8 tone holes on gfx/instruments/wood_flute.png (ordered left-to-right)
