@@ -72,9 +72,20 @@ static struct {
     bool firstStepTriggered = false;
 
     std::atomic<bool> metronomeEnabled{false};
-    float metroPhase = 0.0f;
-    float metroFreq = 1040.0f;
-    float metroEnv = 0.0f;
+
+    // Count-in state (v0.7.0)
+    std::atomic<int>  countInBeatsRem{0};
+    std::atomic<bool> countInFinished{false};
+    double countInSampleAccum = 0.0;
+    bool   countInFirstClick = false;
+
+    // Master EQ / Headphone auto-detection / Per-instrument trim (v0.7.0)
+    std::atomic<bool> masterConfigDirty{true};
+    std::atomic<bool> headphonesInserted{false};
+    std::atomic<bool> speakerVoicingActive{true};
+    uint8_t masterVolPct = 100;
+    uint8_t audioOutMode = AUDIO_OUT_AUTO;
+    int8_t  instTrimPct[INST_COUNT] = {0};
 } s_eng;
 
 static void ndspFrameCallback(void* userdata) {
@@ -131,9 +142,7 @@ static void triggerStepNotes(const LoopFile& loop, int step, double baseSamplesP
         }
     }
     if (s_eng.metronomeEnabled.load(std::memory_order_relaxed) && (step % 4) == 0) {
-        s_eng.metroPhase = 0.0f;
-        s_eng.metroFreq = ((step % 16) == 0) ? 1480.0f : 1040.0f;
-        s_eng.metroEnv = ((step % 16) == 0) ? 0.34f : 0.22f;
+        s_eng.synth.triggerMetronome((step % 16) == 0);
     }
 }
 
@@ -179,6 +188,16 @@ static void fillAudioBuffer(int16_t* outStereo, int numSamples) {
     }
     LightLock_Unlock(&s_eng.loopLock);
 
+    if (s_eng.masterConfigDirty.exchange(false, std::memory_order_relaxed)) {
+        LightLock_Lock(&s_eng.loopLock);
+        uint8_t mv = s_eng.masterVolPct;
+        bool spk = s_eng.speakerVoicingActive.load(std::memory_order_relaxed);
+        int8_t trims[INST_COUNT];
+        std::memcpy(trims, s_eng.instTrimPct, INST_COUNT);
+        LightLock_Unlock(&s_eng.loopLock);
+        s_eng.synth.setMasterConfig(mv, spk, trims);
+    }
+
     uint8_t trackVols[BB_NUM_TRACKS];
     uint8_t trackMuted[BB_NUM_TRACKS];
     for (int t = 0; t < BB_NUM_TRACKS; ++t) {
@@ -189,6 +208,53 @@ static void fillAudioBuffer(int16_t* outStereo, int numSamples) {
     float revMix = (loopCopy.reverbMix <= 100) ? (static_cast<float>(loopCopy.reverbMix) * 0.01f) : 0.38f;
     float bend = s_eng.liveBendSemis.load(std::memory_order_relaxed);
     float vib  = s_eng.liveVibrato.load(std::memory_order_relaxed);
+    if (bpm < 60 || bpm > 180) bpm = 110;
+
+    // 4-Beat Count-In before REC / Vocal start from stopped
+    int ciRem = s_eng.countInBeatsRem.load(std::memory_order_relaxed);
+    if (ciRem > 0) {
+        double samplesPerBeat = (static_cast<double>(BB_SAMPLE_RATE) * 60.0) / static_cast<double>(bpm);
+        int rendered = 0;
+        while (rendered < numSamples && ciRem > 0) {
+            if (!s_eng.countInFirstClick) {
+                s_eng.countInFirstClick = true;
+                s_eng.countInSampleAccum = 0.0;
+                s_eng.synth.triggerMetronome(ciRem == 4);
+            }
+            double toNext = samplesPerBeat - s_eng.countInSampleAccum;
+            int chunk = numSamples - rendered;
+            bool beatDone = false;
+            if (toNext <= static_cast<double>(chunk)) {
+                chunk = static_cast<int>(std::ceil(toNext));
+                if (chunk < 0) chunk = 0;
+                if (chunk > numSamples - rendered) chunk = numSamples - rendered;
+                beatDone = true;
+            }
+            if (chunk > 0) {
+                s_eng.synth.render(&outStereo[rendered * 2], chunk, bend, vib, trackVols, trackMuted, revMix);
+                rendered += chunk;
+                s_eng.countInSampleAccum += static_cast<double>(chunk);
+            }
+            if (beatDone) {
+                s_eng.countInSampleAccum -= samplesPerBeat;
+                if (s_eng.countInSampleAccum < 0.0) s_eng.countInSampleAccum = 0.0;
+                ciRem--;
+                s_eng.countInBeatsRem.store(ciRem, std::memory_order_relaxed);
+                if (ciRem > 0) {
+                    s_eng.synth.triggerMetronome(false);
+                } else {
+                    s_eng.countInFirstClick = false;
+                    s_eng.countInFinished.store(true, std::memory_order_relaxed);
+                }
+            }
+        }
+        if (rendered < numSamples) {
+            s_eng.synth.render(&outStereo[rendered * 2], numSamples - rendered, bend, vib, trackVols, trackMuted, revMix);
+        }
+        s_eng.peakLevel.store(s_eng.synth.getLastPeakLevel(), std::memory_order_relaxed);
+        return;
+    }
+
     bool isPlaying = s_eng.playing.load(std::memory_order_relaxed);
 
     if (!isPlaying) {
@@ -198,7 +264,6 @@ static void fillAudioBuffer(int16_t* outStereo, int numSamples) {
         return;
     }
 
-    if (bpm < 60 || bpm > 180) bpm = 110;
     double baseSamplesPerStep = (static_cast<double>(BB_SAMPLE_RATE) * 60.0) / (static_cast<double>(bpm) * 4.0);
     int totalSteps = (loopCopy.numBars == 2) ? BB_MAX_STEPS : BB_STEPS_PER_LOOP;
 
@@ -226,22 +291,6 @@ static void fillAudioBuffer(int16_t* outStereo, int numSamples) {
 
         if (chunk > 0) {
             s_eng.synth.render(&outStereo[rendered * 2], chunk, bend, vib, trackVols, trackMuted, revMix);
-            if (s_eng.metroEnv > 0.001f) {
-                const float phaseInc = s_eng.metroFreq / static_cast<float>(BB_SAMPLE_RATE);
-                for (int i = 0; i < chunk; ++i) {
-                    float clk = std::sin(s_eng.metroPhase * 6.2831853f) * s_eng.metroEnv;
-                    s_eng.metroPhase += phaseInc;
-                    if (s_eng.metroPhase >= 1.0f) s_eng.metroPhase -= 1.0f;
-                    s_eng.metroEnv *= 0.991f;
-                    int32_t add = static_cast<int32_t>(clk * 22000.0f);
-                    int32_t l = static_cast<int32_t>(outStereo[(rendered + i) * 2]) + add;
-                    int32_t r = static_cast<int32_t>(outStereo[(rendered + i) * 2 + 1]) + add;
-                    if (l < -32768) l = -32768; else if (l > 32767) l = 32767;
-                    if (r < -32768) r = -32768; else if (r > 32767) r = 32767;
-                    outStereo[(rendered + i) * 2] = static_cast<int16_t>(l);
-                    outStereo[(rendered + i) * 2 + 1] = static_cast<int16_t>(r);
-                }
-            }
             rendered += chunk;
             s_eng.sampleAccum += static_cast<double>(chunk);
         }
@@ -598,11 +647,80 @@ float audioEngineGetPeakLevel() {
 
 void audioEngineSetMetronome(bool enabled) {
     s_eng.metronomeEnabled.store(enabled, std::memory_order_relaxed);
-    if (!enabled) s_eng.metroEnv = 0.0f;
 }
 
 bool audioEngineGetMetronome() {
     return s_eng.metronomeEnabled.load(std::memory_order_relaxed);
+}
+
+void audioEngineStartCountIn(int beats) {
+    if (beats < 1) beats = 4;
+    s_eng.countInFinished.store(false, std::memory_order_relaxed);
+    s_eng.countInFirstClick = false;
+    s_eng.countInSampleAccum = 0.0;
+    s_eng.countInBeatsRem.store(beats, std::memory_order_relaxed);
+}
+
+void audioEngineCancelCountIn() {
+    s_eng.countInBeatsRem.store(0, std::memory_order_relaxed);
+    s_eng.countInFinished.store(false, std::memory_order_relaxed);
+    s_eng.countInFirstClick = false;
+}
+
+bool audioEngineIsCountingIn() {
+    return s_eng.countInBeatsRem.load(std::memory_order_relaxed) > 0;
+}
+
+int audioEngineGetCountInBeatRemaining() {
+    return s_eng.countInBeatsRem.load(std::memory_order_relaxed);
+}
+
+bool audioEngineConsumeCountInFinished() {
+    return s_eng.countInFinished.exchange(false, std::memory_order_relaxed);
+}
+
+static void updateEffectiveSpeakerVoicingLocked() {
+    bool hp = s_eng.headphonesInserted.load(std::memory_order_relaxed);
+    bool spk = (s_eng.audioOutMode == AUDIO_OUT_SPEAKER)
+                   ? true
+                   : ((s_eng.audioOutMode == AUDIO_OUT_HEADPHONE) ? false : !hp);
+    bool prev = s_eng.speakerVoicingActive.exchange(spk, std::memory_order_relaxed);
+    if (prev != spk) {
+        s_eng.masterConfigDirty.store(true, std::memory_order_relaxed);
+    }
+}
+
+void audioEngineSetMasterConfig(uint8_t masterVolPct, uint8_t audioOutMode, const int8_t instTrimPct[INST_COUNT]) {
+    LightLock_Lock(&s_eng.loopLock);
+    s_eng.masterVolPct = (masterVolPct <= 150) ? masterVolPct : 100;
+    s_eng.audioOutMode = (audioOutMode < AUDIO_OUT_COUNT) ? audioOutMode : static_cast<uint8_t>(AUDIO_OUT_AUTO);
+    if (instTrimPct) {
+        std::memcpy(s_eng.instTrimPct, instTrimPct, INST_COUNT);
+    }
+    updateEffectiveSpeakerVoicingLocked();
+    s_eng.masterConfigDirty.store(true, std::memory_order_relaxed);
+    LightLock_Unlock(&s_eng.loopLock);
+}
+
+void audioEnginePollHeadphones() {
+    if (!s_eng.dspReady) return;
+    bool hp = false;
+    if (R_SUCCEEDED(DSP_GetHeadphoneStatus(&hp))) {
+        bool prevHp = s_eng.headphonesInserted.exchange(hp, std::memory_order_relaxed);
+        if (prevHp != hp) {
+            LightLock_Lock(&s_eng.loopLock);
+            updateEffectiveSpeakerVoicingLocked();
+            LightLock_Unlock(&s_eng.loopLock);
+        }
+    }
+}
+
+bool audioEngineIsHeadphonesInserted() {
+    return s_eng.headphonesInserted.load(std::memory_order_relaxed);
+}
+
+bool audioEngineIsSpeakerVoicingActive() {
+    return s_eng.speakerVoicingActive.load(std::memory_order_relaxed);
 }
 
 } // namespace BardBeats

@@ -10,6 +10,7 @@
 namespace BardBeats {
 
 static const char* ROOT_DIR    = "sdmc:/3ds/BardBeats";
+static const char* CONFIG_PATH = "sdmc:/3ds/BardBeats/config.bin";
 static const char* LOOPS_DIR   = "sdmc:/3ds/BardBeats/loops";
 static const char* SONGS_DIR   = "sdmc:/3ds/BardBeats/songs";
 static const char* VOCALS_DIR  = "sdmc:/3ds/BardBeats/vocals";
@@ -97,6 +98,43 @@ bool storageInit() {
         }
     }
     return true;
+}
+
+bool storageLoadConfig(AppConfig& outCfg) {
+    initDefaultConfig(outCfg);
+    FILE* f = std::fopen(CONFIG_PATH, "rb");
+    if (!f) return false;
+    AppConfig loaded{};
+    size_t rd = std::fread(&loaded, 1, sizeof(AppConfig), f);
+    std::fclose(f);
+    if (rd != sizeof(AppConfig) || std::memcmp(loaded.magic, "BBCF", 4) != 0) {
+        return false;
+    }
+    if (loaded.masterVolume > 150) loaded.masterVolume = 100;
+    if (loaded.audioOutMode >= AUDIO_OUT_COUNT) loaded.audioOutMode = AUDIO_OUT_AUTO;
+    if (loaded.shoulderMode >= SHOULDER_MODE_COUNT) loaded.shoulderMode = SHOULDER_OCTAVE_HOLD;
+    for (int i = 0; i < INST_COUNT; ++i) {
+        if (loaded.instTrimPct[i] < -50) loaded.instTrimPct[i] = -50;
+        if (loaded.instTrimPct[i] >  50) loaded.instTrimPct[i] =  50;
+    }
+    outCfg = loaded;
+    return true;
+}
+
+bool storageSaveConfig(const AppConfig& cfg) {
+    char tmpPath[256];
+    std::snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", CONFIG_PATH);
+    FILE* f = std::fopen(tmpPath, "wb");
+    if (!f) return false;
+    size_t wr = std::fwrite(&cfg, 1, sizeof(AppConfig), f);
+    std::fflush(f);
+    std::fclose(f);
+    if (wr != sizeof(AppConfig)) {
+        std::remove(tmpPath);
+        return false;
+    }
+    std::remove(CONFIG_PATH);
+    return std::rename(tmpPath, CONFIG_PATH) == 0;
 }
 
 static bool readLoopFileAutoMigrate(const char* path, LoopFile& outLoop) {
@@ -535,7 +573,8 @@ static bool bounceArrangementToWav(const char* path, uint16_t bpm,
                                    const std::vector<uint8_t>& repeats,
                                    const std::vector<uint8_t>& muteMasks,
                                    const std::vector<int16_t>& vocalSamples,
-                                   uint8_t vocalVol, bool vocalMuted, float reverbMix) {
+                                   uint8_t vocalVol, bool vocalMuted,
+                                   const AppConfig* cfg) {
     if (loops.empty()) return false;
     FILE* f = std::fopen(path, "wb");
     if (!f) return false;
@@ -556,6 +595,13 @@ static bool bounceArrangementToWav(const char* path, uint16_t bpm,
 
     SynthVoices synth;
     synth.init();
+    // Always export WAV in full-range Headphone/Studio mode (no 135 Hz speaker HPF)
+    if (cfg) {
+        synth.setMasterConfig(cfg->masterVolume, false, cfg->instTrimPct);
+    } else {
+        int8_t zeroTrims[INST_COUNT] = {0};
+        synth.setMasterConfig(100, false, zeroTrims);
+    }
 
     if (bpm < 60 || bpm > 180) bpm = 110;
     double baseStepSamples = (static_cast<double>(BB_SAMPLE_RATE) * 60.0) / (static_cast<double>(bpm) * 4.0);
@@ -571,6 +617,7 @@ static bool bounceArrangementToWav(const char* path, uint16_t bpm,
         uint8_t mMask = (e < muteMasks.size()) ? muteMasks[e] : 0;
         int numSteps = (lp.numBars == 2) ? BB_MAX_STEPS : BB_STEPS_PER_LOOP;
         double swing = (lp.swingPercent >= 50 && lp.swingPercent <= 66) ? lp.swingPercent : 50.0;
+        float revMix = (lp.reverbMix <= 100) ? (static_cast<float>(lp.reverbMix) * 0.01f) : 0.38f;
 
         uint8_t trackVols[BB_NUM_TRACKS];
         uint8_t trackMuted[BB_NUM_TRACKS];
@@ -604,7 +651,7 @@ static bool bounceArrangementToWav(const char* path, uint16_t bpm,
                 int rem = stepSamples;
                 while (rem > 0) {
                     int n = (rem > CHUNK) ? CHUNK : rem;
-                    synth.render(chunkBuf.data(), n, 0.0f, 0.0f, trackVols, trackMuted, reverbMix);
+                    synth.render(chunkBuf.data(), n, 0.0f, 0.0f, trackVols, trackMuted, revMix);
                     if (vocGain > 0.0f) {
                         for (int i = 0; i < n; ++i) {
                             uint32_t vIdx = vocalPosQ1 >> 1;
@@ -637,7 +684,7 @@ static bool bounceArrangementToWav(const char* path, uint16_t bpm,
 }
 
 bool storageExportLoopWav(const LoopFile& loop, const std::vector<int16_t>& vocalSamples,
-                          char* outPathBuf, int outPathBufSize) {
+                          char* outPathBuf, int outPathBufSize, const AppConfig* cfg) {
     char cleanName[32];
     sanitizeName(loop.name, cleanName, sizeof(cleanName));
     char path[256];
@@ -647,8 +694,7 @@ bool storageExportLoopWav(const LoopFile& loop, const std::vector<int16_t>& voca
     std::vector<uint8_t> reps   = { 2 }; // Export 2 passes so ring-out tail is captured
     std::vector<uint8_t> masks  = { 0 };
     bool ok = bounceArrangementToWav(path, loop.bpm, loops, reps, masks, vocalSamples,
-                                     loop.vocalVolume, loop.vocalMuted != 0,
-                                     static_cast<float>(loop.reverbMix) * 0.01f);
+                                     loop.vocalVolume, loop.vocalMuted != 0, cfg);
     if (ok && outPathBuf && outPathBufSize > 0) {
         std::snprintf(outPathBuf, outPathBufSize, "%s", path);
     }
@@ -656,7 +702,7 @@ bool storageExportLoopWav(const LoopFile& loop, const std::vector<int16_t>& voca
 }
 
 bool storageExportSongWav(const SongFile& song, const std::vector<int16_t>& vocalSamples,
-                          char* outPathBuf, int outPathBufSize) {
+                          char* outPathBuf, int outPathBufSize, const AppConfig* cfg) {
     if (song.numEntries == 0) return false;
     char cleanName[32];
     sanitizeName(song.name, cleanName, sizeof(cleanName));
@@ -676,7 +722,7 @@ bool storageExportSongWav(const SongFile& song, const std::vector<int16_t>& voca
         masks.push_back(song.chain[i].muteMask);
     }
     bool ok = bounceArrangementToWav(path, song.bpm, loops, reps, masks, vocalSamples,
-                                     song.songVocalVolume, song.songVocalMuted != 0, 0.38f);
+                                     song.songVocalVolume, song.songVocalMuted != 0, cfg);
     if (ok && outPathBuf && outPathBufSize > 0) {
         std::snprintf(outPathBuf, outPathBufSize, "%s", path);
     }

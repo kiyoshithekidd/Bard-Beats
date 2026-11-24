@@ -17,17 +17,23 @@ enum ViewMode : uint8_t {
 };
 
 constexpr int BB_WAVE_BARS = 40;
+constexpr int BB_UNDO_LEVELS = 8;
 
 struct AppState {
-    // Active Loop & Undo
+    // Persistent User Config (v0.7.0)
+    AppConfig config;
+
+    // Active Loop & 8-Step Multi-Track Undo Ring
     LoopFile currentLoop;
-    TrackData undoSnapshot;
-    int      undoTrackIdx = 0;
+    LoopFile undoRing[BB_UNDO_LEVELS];
+    int      undoHead = 0;
+    int      undoCount = 0;
     bool     hasUndo = false;
     int      gridBarPage = 0; // 0 = steps 1..16, 1 = steps 17..32
 
     // Active Song & Drill-Down Context
     SongFile currentSong;
+    LoopFile songSlotLoopCache; // Resolved loop for selectedSongSlot (for Song Track Bar & Mix)
     std::vector<SongSummary> savedSongs;
     int      selectedSongSlot = 0;
     int      songShelfPage = 0;
@@ -35,9 +41,10 @@ struct AppState {
     bool     editingFromSong = false;
     int      returnSongSlot = 0;
 
-    // Mix Overlay Drawer (#4), Instrument Picker (#20), & Wi-Fi MIDI (#6)
+    // Overlays: Mix Drawer (#4), Instrument Picker (#20), Help Scroll (v0.7.0), Wi-Fi MIDI (#6)
     bool     showMixDrawer = false;
     bool     showInstPicker = false;
+    bool     showHelpOverlay = false;
     bool     wifiMidiEnabled = false;
 
     // Vocal Layer & Non-Destructive Retake Shadow Buffer
@@ -57,6 +64,22 @@ struct AppState {
 
     bool     isPlaying = false;
     bool     isRecording = false;
+
+    // 4-Beat Count-In pending action (0=none, 1=recGrid, 2=recClipVocal, 3=recSongVocal)
+    int      pendingCountInAction = 0;
+
+    // Tap Tempo timestamps (ms from osGetTime)
+    uint64_t tapTimes[4] = {0};
+    int      tapCount = 0;
+
+    // Shoulder L/R runtime state (v0.7.0)
+    bool     lHeld = false;
+    bool     rHeld = false;
+    int      rollHeldDegree = -1;
+    int      lastRollStep = -1;
+    int      selectHoldFrames = 0;
+    bool     selectConsumedByHelp = false;
+    int      hpPollCounter = 0;
 
     // Live play telemetry for visualizers
     float    circleBendSemis = 0.0f;
@@ -87,15 +110,18 @@ struct AppState {
     int      toastFrames = 0;
 
     void init();
+    void saveConfig();
+    void syncMasterConfig();
     void refreshSavedLoops();
     void refreshSavedSongs();
+    void refreshSongSlotLoopCache();
     void setToast(const char* msg, int frames = 120);
 
     // Navigation
     void switchView(ViewMode newView);
 
     // Loop operations
-    void snapshotForUndo(int trackIdx);
+    void snapshotForUndo(int trackIdx = -1);
     void performUndo();
     void togglePlay();
     void toggleRecord();
@@ -109,9 +135,14 @@ struct AppState {
     void cycleLoopBarsAndPage();
     void cycleSwing();
     void cycleRootKey();
+    void cycleScaleSmart();
     void rollBardicDice();
     void toggleMetronome();
     void cyclePerfMode();
+    void cycleAudioOutMode();
+    void cycleShoulderMode();
+    void tapTempo();
+    void adjustBpm(int delta);
     void exportCurrentLoopWav();
 
     // Song operations
@@ -125,6 +156,7 @@ struct AppState {
     void copyAndTweakSongSlot(int slotIdx);
     void editSongSlotLoop(int slotIdx);
     void cycleSongSlotLoop(int slotIdx, int dir);
+    void toggleSongSlotTrackMute(int slotIdx, int trackIdx);
     void returnToSongFromEdit();
     void deleteSongSlot(int slotIdx);
     void exportCurrentSongWav();
@@ -135,6 +167,7 @@ struct AppState {
     // Vocal & Mix operations
     void loadActiveVocalForCurrentMode();
     void startVocalRecording(bool songScope);
+    void beginVocalCaptureNow(bool songScope);
     void stopVocalRecording(bool commit);
     void pollVocalRecording();
     void undoVocalTake();
@@ -144,6 +177,8 @@ struct AppState {
     void toggleWifiMidi();
 
     // Live note input
+    int  getEffectiveLiveOctaveOffset() const;
+    float getEffectiveLiveBendSemis() const;
     void playLiveDegree(int degree, uint8_t velocity = 100);
     void releaseLiveNotes();
 

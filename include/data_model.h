@@ -149,6 +149,32 @@ struct SongFile {
     uint8_t        reserved[22];
     SongChainEntry chain[BB_MAX_SONG_CLIPS];
 };
+enum ShoulderMode : uint8_t {
+    SHOULDER_OCTAVE_HOLD = 0, // Hold L = -1 oct, Hold R = +1 oct, L+R = +2 oct
+    SHOULDER_SEMITONE    = 1, // Hold L = Flat (-1 st), Hold R = Sharp (+1 st)
+    SHOULDER_SUS_ROLL    = 2, // Hold L = Sustain Latch, Hold R = 16th Accent Roll
+    SHOULDER_MODE_COUNT  = 3
+};
+
+enum AudioOutMode : uint8_t {
+    AUDIO_OUT_AUTO      = 0, // Auto-detect via DSP_GetHeadphoneStatus()
+    AUDIO_OUT_SPEAKER   = 1, // Force 3DS Speaker Voicing (135Hz HPF + Mid Presence)
+    AUDIO_OUT_HEADPHONE = 2, // Force Full Sub-Bass Headphone Voicing
+    AUDIO_OUT_COUNT     = 3
+};
+
+struct AppConfig {
+    char     magic[4];              // "BBCF"
+    uint16_t version;               // 1
+    uint8_t  masterVolume;          // 0..150 (default 100)
+    uint8_t  audioOutMode;          // AudioOutMode
+    uint8_t  shoulderMode;          // ShoulderMode
+    uint8_t  spellbookQuantizedCue; // 0 or 1
+    uint16_t lastLoopId;            // Last active loop ID
+    uint16_t lastSongId;            // Last active song ID
+    int8_t   instTrimPct[INST_COUNT]; // Per-instrument trim -50..+50 (%)
+    uint8_t  reserved[34];          // Pad to 64 bytes
+};
 #pragma pack(pop)
 
 // Helper functions
@@ -159,12 +185,16 @@ const char* getInstrumentName(uint8_t instId);
 const char* getInstrumentShortName(uint8_t instId);
 const char* getScaleName(uint8_t scaleId);
 const char* getTrackRoleName(int trackIdx);
+const char* getDegreeButtonBadge(int degree);
+const char* getShoulderModeName(uint8_t mode);
+const char* getAudioOutModeName(uint8_t mode);
 void getNoteName(uint8_t midiNote, char* outBuf, int bufSize);
 uint8_t cycleTrackInstrument(int trackIdx, uint8_t currentInstId);
 
 constexpr int BB_NUM_STARTER_LOOPS = 8;
 constexpr int BB_NUM_STARTER_SONGS = 3;
 
+void initDefaultConfig(AppConfig& cfg);
 void initEmptyLoop(LoopFile& loop, uint16_t id, const char* name, uint16_t bpm = 110);
 void initStarterLoop(LoopFile& loop, int presetIndex);
 void migrateLoopV1ToV2(const LoopFileV1& v1, LoopFile& v2);
@@ -180,9 +210,10 @@ bool stepHasNote(const StepCell& cell, uint8_t midiNote);
 bool stepHasAnyNote(const StepCell& cell);
 void clearStepCell(StepCell& cell);
 
-// Root key & Bardic Dice helpers (v0.3.0)
+// Root key, scale remap & Bardic Dice helpers
 const char* getRootNoteName(uint8_t rootNote);
 void transposeLoopRoot(LoopFile& loop, int semitoneDelta);
+void remapLoopToScale(LoopFile& loop, uint8_t newScaleId);
 void generateBardicDiceTrack(LoopFile& loop, int trackIdx, uint32_t& rngSeed);
 
 } // namespace BardBeats

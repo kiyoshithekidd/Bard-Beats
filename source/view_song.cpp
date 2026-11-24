@@ -63,9 +63,15 @@ void viewSongDrawTop(const AppState& state) {
         if (segW >= 34.0f) {
             char lbl[20];
             std::snprintf(lbl, sizeof(lbl), "%s x%d", getSectionTagName(e.sectionTag), reps);
-            uiDrawText(sr.x + 4.0f, sr.y + 6.0f, 0.38f, 0.38f, Colors::CREAM_TEXT, lbl);
-            uiDrawText(sr.x + 4.0f, sr.y + 24.0f, 0.38f, 0.38f, Colors::BG_DARK,
+            uiDrawText(sr.x + 4.0f, sr.y + 4.0f, 0.38f, 0.38f, Colors::CREAM_TEXT, lbl);
+            uiDrawText(sr.x + 4.0f, sr.y + 20.0f, 0.38f, 0.38f, Colors::BG_DARK,
                        state.getLoopNameById(e.loopId));
+            // 4-track active dots along bottom of each Song Timeline segment
+            for (int t = 0; t < BB_NUM_TRACKS; ++t) {
+                bool tMuted = (e.muteMask & (1u << t)) != 0;
+                C2D_DrawRectSolid(sr.x + 4.0f + t * 8.0f, sr.y + sr.h - 9.0f, 0.22f, 6.0f, 5.0f,
+                                  tMuted ? Colors::BG_DARK : Colors::TRACK_COLORS[t]);
+            }
         }
 
         if (isPlayingSlot) {
@@ -158,17 +164,19 @@ void viewSongDrawBottom(const AppState& state) {
         return;
     }
 
-    // Row 1: Master Tempo, Songs Shelf, Rename, Vocal Mute/Clear, Mix (y: 68..92)
-    Rect btnBpmDn   = {  4.0f, 68.0f, 34.0f, 24.0f };
-    Rect btnBpmUp   = { 40.0f, 68.0f, 34.0f, 24.0f };
-    Rect btnSongs   = { 76.0f, 68.0f, 52.0f, 24.0f };
-    Rect btnRename  = {130.0f, 68.0f, 44.0f, 24.0f };
-    Rect btnVocMute = {176.0f, 68.0f, 54.0f, 24.0f };
-    Rect btnVocClr  = {232.0f, 68.0f, 44.0f, 24.0f };
-    Rect btnMix     = {278.0f, 68.0f, 38.0f, 24.0f };
+    // Row 1: -1 | TAP | +1 | SONGS | NAME | MUTE V | CLRV | MIX (y: 68..92)
+    Rect btnBpmDn   = {  3.0f, 68.0f, 22.0f, 24.0f };
+    Rect btnTap     = { 26.0f, 68.0f, 32.0f, 24.0f };
+    Rect btnBpmUp   = { 59.0f, 68.0f, 22.0f, 24.0f };
+    Rect btnSongs   = { 83.0f, 68.0f, 50.0f, 24.0f };
+    Rect btnRename  = {135.0f, 68.0f, 42.0f, 24.0f };
+    Rect btnVocMute = {179.0f, 68.0f, 52.0f, 24.0f };
+    Rect btnVocClr  = {233.0f, 68.0f, 42.0f, 24.0f };
+    Rect btnMix     = {277.0f, 68.0f, 40.0f, 24.0f };
 
-    uiDrawButton(btnBpmDn, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-BM", 0.38f);
-    uiDrawButton(btnBpmUp, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+BM", 0.38f);
+    uiDrawButton(btnBpmDn, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-", 0.42f);
+    uiDrawButton(btnTap,   Colors::BG_CARD_ALT, Colors::GOLD_TEXT, Colors::GOLD_TEXT, "TAP", 0.38f);
+    uiDrawButton(btnBpmUp, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+", 0.42f);
     uiDrawButton(btnSongs, Colors::PURPLE_SPELL, Colors::GOLD_TEXT, Colors::CREAM_TEXT, "SONGS", 0.38f);
     uiDrawButton(btnRename, Colors::BG_CARD_ALT, Colors::BORDER_WOOD, Colors::GOLD_TEXT, "NAME", 0.38f);
     uiDrawButton(btnVocMute,
@@ -178,10 +186,10 @@ void viewSongDrawBottom(const AppState& state) {
     uiDrawButton(btnVocClr, Colors::BG_CARD, Colors::RED_REC, Colors::RED_REC, "CLRV", 0.38f);
     uiDrawButton(btnMix, Colors::BG_CARD_ALT, Colors::GOLD_TEXT, Colors::GOLD_TEXT, "MIX", 0.38f);
 
-    // Row 2: Selected Clip Card + Prev/Next Slot Selector (y: 96..158)
-    Rect btnPrevSlot = {  4.0f, 98.0f, 36.0f, 58.0f };
-    Rect cardRect    = { 44.0f, 98.0f, 232.0f, 58.0f };
-    Rect btnNextSlot = {280.0f, 98.0f, 36.0f, 58.0f };
+    // Row 2: Selected Clip Card + Prev/Next Slot Selector (y: 98..156)
+    Rect btnPrevSlot = {  4.0f, 98.0f, 34.0f, 58.0f };
+    Rect cardRect    = { 41.0f, 98.0f, 238.0f, 58.0f };
+    Rect btnNextSlot = {282.0f, 98.0f, 34.0f, 58.0f };
 
     uiDrawButton(btnPrevSlot, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, "<", 0.55f);
     uiDrawButton(btnNextSlot, Colors::BG_CARD, Colors::BORDER_WOOD, Colors::GOLD_TEXT, ">", 0.55f);
@@ -195,18 +203,29 @@ void viewSongDrawBottom(const AppState& state) {
         std::snprintf(header, sizeof(header), "Slot %d/%d: [%s] x%d",
                       state.selectedSongSlot + 1, state.currentSong.numEntries,
                       getSectionTagName(e.sectionTag), e.repeatCount);
-        uiDrawText(cardRect.x + 8.0f, cardRect.y + 4.0f, 0.38f, 0.38f, Colors::GOLD_TEXT, header);
+        uiDrawText(cardRect.x + 6.0f, cardRect.y + 3.0f, 0.38f, 0.38f, Colors::GOLD_TEXT, header);
 
         char loopLbl[48];
         std::snprintf(loopLbl, sizeof(loopLbl), "Loop: %s", state.getLoopNameById(e.loopId));
-        uiDrawText(cardRect.x + 8.0f, cardRect.y + 18.0f, 0.38f, 0.38f, Colors::CREAM_TEXT, loopLbl);
+        uiDrawText(cardRect.x + 6.0f, cardRect.y + 17.0f, 0.38f, 0.38f, Colors::CREAM_TEXT, loopLbl);
 
-        Rect btnLpDn  = { cardRect.x +   8.0f, cardRect.y + 34.0f, 44.0f, 20.0f };
-        Rect btnLpUp  = { cardRect.x +  56.0f, cardRect.y + 34.0f, 44.0f, 20.0f };
-        Rect btnRepDn = { cardRect.x + 150.0f, cardRect.y + 34.0f, 34.0f, 20.0f };
-        Rect btnRepUp = { cardRect.x + 188.0f, cardRect.y + 34.0f, 34.0f, 20.0f };
+        Rect btnLpDn  = { cardRect.x +   6.0f, cardRect.y + 34.0f, 36.0f, 20.0f };
+        Rect btnLpUp  = { cardRect.x +  44.0f, cardRect.y + 34.0f, 36.0f, 20.0f };
         uiDrawButton(btnLpDn,  Colors::BG_DARK, Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "<LP", 0.38f);
         uiDrawButton(btnLpUp,  Colors::BG_DARK, Colors::BORDER_WOOD, Colors::GOLD_TEXT,  "LP>", 0.38f);
+
+        // Per-Slot Track Mute Pills [D][B][M][H] (wired to SongChainEntry::muteMask)
+        static const char* TRK_LETTERS[4] = { "D", "B", "M", "H" };
+        for (int t = 0; t < BB_NUM_TRACKS; ++t) {
+            Rect mr = { cardRect.x + 86.0f + t * 22.0f, cardRect.y + 34.0f, 20.0f, 20.0f };
+            bool muted = (e.muteMask & (1u << t)) != 0;
+            uiDrawButton(mr, muted ? Colors::BG_DARK : Colors::TRACK_COLORS[t],
+                         muted ? Colors::RED_REC : Colors::CREAM_TEXT,
+                         muted ? Colors::MUTED_TEXT : Colors::BG_DARK, TRK_LETTERS[t], 0.38f);
+        }
+
+        Rect btnRepDn = { cardRect.x + 178.0f, cardRect.y + 34.0f, 26.0f, 20.0f };
+        Rect btnRepUp = { cardRect.x + 206.0f, cardRect.y + 34.0f, 26.0f, 20.0f };
         uiDrawButton(btnRepDn, Colors::BG_DARK, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "-x",  0.38f);
         uiDrawButton(btnRepUp, Colors::BG_DARK, Colors::BORDER_WOOD, Colors::CREAM_TEXT, "+x",  0.38f);
     } else {
@@ -264,22 +283,25 @@ void viewSongHandleTouch(AppState& state, float tx, float ty, bool isJustPressed
         return;
     }
 
-    Rect btnBpmDn   = {  4.0f, 68.0f, 34.0f, 24.0f };
-    Rect btnBpmUp   = { 40.0f, 68.0f, 34.0f, 24.0f };
-    Rect btnSongs   = { 76.0f, 68.0f, 52.0f, 24.0f };
-    Rect btnRename  = {130.0f, 68.0f, 44.0f, 24.0f };
-    Rect btnVocMute = {176.0f, 68.0f, 54.0f, 24.0f };
-    Rect btnVocClr  = {232.0f, 68.0f, 44.0f, 24.0f };
-    Rect btnMix     = {278.0f, 68.0f, 38.0f, 24.0f };
+    Rect btnBpmDn   = {  3.0f, 68.0f, 22.0f, 24.0f };
+    Rect btnTap     = { 26.0f, 68.0f, 32.0f, 24.0f };
+    Rect btnBpmUp   = { 59.0f, 68.0f, 22.0f, 24.0f };
+    Rect btnSongs   = { 83.0f, 68.0f, 50.0f, 24.0f };
+    Rect btnRename  = {135.0f, 68.0f, 42.0f, 24.0f };
+    Rect btnVocMute = {179.0f, 68.0f, 52.0f, 24.0f };
+    Rect btnVocClr  = {233.0f, 68.0f, 42.0f, 24.0f };
+    Rect btnMix     = {277.0f, 68.0f, 40.0f, 24.0f };
 
     if (btnBpmDn.contains(tx, ty)) {
-        if (state.currentSong.bpm > 60) state.currentSong.bpm -= 4;
-        state.syncSongToAudio();
+        state.adjustBpm(-1);
+        return;
+    }
+    if (btnTap.contains(tx, ty)) {
+        state.tapTempo();
         return;
     }
     if (btnBpmUp.contains(tx, ty)) {
-        if (state.currentSong.bpm < 180) state.currentSong.bpm += 4;
-        state.syncSongToAudio();
+        state.adjustBpm(1);
         return;
     }
     if (btnSongs.contains(tx, ty)) {
@@ -300,24 +322,29 @@ void viewSongHandleTouch(AppState& state, float tx, float ty, bool isJustPressed
         return;
     }
     if (btnMix.contains(tx, ty)) {
+        state.refreshSongSlotLoopCache();
         state.showMixDrawer = true;
+        state.showInstPicker = false;
+        state.showHelpOverlay = false;
         return;
     }
 
-    Rect btnPrevSlot = {  4.0f, 98.0f, 36.0f, 58.0f };
-    Rect cardRect    = { 44.0f, 98.0f, 232.0f, 58.0f };
-    Rect btnNextSlot = {280.0f, 98.0f, 36.0f, 58.0f };
-    Rect btnLpDn     = { cardRect.x +   8.0f, cardRect.y + 34.0f, 44.0f, 20.0f };
-    Rect btnLpUp     = { cardRect.x +  56.0f, cardRect.y + 34.0f, 44.0f, 20.0f };
-    Rect btnRepDn    = { cardRect.x + 150.0f, cardRect.y + 34.0f, 34.0f, 20.0f };
-    Rect btnRepUp    = { cardRect.x + 188.0f, cardRect.y + 34.0f, 34.0f, 20.0f };
+    Rect btnPrevSlot = {  4.0f, 98.0f, 34.0f, 58.0f };
+    Rect cardRect    = { 41.0f, 98.0f, 238.0f, 58.0f };
+    Rect btnNextSlot = {282.0f, 98.0f, 34.0f, 58.0f };
+    Rect btnLpDn     = { cardRect.x +   6.0f, cardRect.y + 34.0f, 36.0f, 20.0f };
+    Rect btnLpUp     = { cardRect.x +  44.0f, cardRect.y + 34.0f, 36.0f, 20.0f };
+    Rect btnRepDn    = { cardRect.x + 178.0f, cardRect.y + 34.0f, 26.0f, 20.0f };
+    Rect btnRepUp    = { cardRect.x + 206.0f, cardRect.y + 34.0f, 26.0f, 20.0f };
 
     if (btnPrevSlot.contains(tx, ty) && state.selectedSongSlot > 0) {
         state.selectedSongSlot--;
+        state.refreshSongSlotLoopCache();
         return;
     }
     if (btnNextSlot.contains(tx, ty) && state.selectedSongSlot + 1 < state.currentSong.numEntries) {
         state.selectedSongSlot++;
+        state.refreshSongSlotLoopCache();
         return;
     }
     if (state.currentSong.numEntries > 0 && state.selectedSongSlot < state.currentSong.numEntries) {
@@ -329,6 +356,13 @@ void viewSongHandleTouch(AppState& state, float tx, float ty, bool isJustPressed
         if (btnLpUp.contains(tx, ty)) {
             state.cycleSongSlotLoop(state.selectedSongSlot, 1);
             return;
+        }
+        for (int t = 0; t < BB_NUM_TRACKS; ++t) {
+            Rect mr = { cardRect.x + 86.0f + t * 22.0f, cardRect.y + 34.0f, 20.0f, 20.0f };
+            if (mr.contains(tx, ty)) {
+                state.toggleSongSlotTrackMute(state.selectedSongSlot, t);
+                return;
+            }
         }
         if (btnRepDn.contains(tx, ty)) {
             if (e.repeatCount > 1) e.repeatCount--;

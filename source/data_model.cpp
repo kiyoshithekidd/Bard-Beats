@@ -27,11 +27,30 @@ static const char* DRUM_ROW_NAMES[BB_GRID_ROWS] = {
     "Kick", "Tom", "Snare", "Clap", "CHat", "OHat", "Tamb", "Shak"
 };
 
+static const int SCALE_PERIOD[SCALE_COUNT] = {
+    7, // Dorian (7 notes/oct)
+    5, // Minor Pentatonic (5 notes/oct)
+    7, // Major (7 notes/oct)
+    7, // Natural Minor (7 notes/oct)
+    12 // Chromatic (12 notes/oct)
+};
+
 uint8_t getScaleNote(uint8_t scaleId, uint8_t rootNote, int octaveOffset, int degree) {
     if (scaleId >= SCALE_COUNT) scaleId = SCALE_DORIAN;
-    if (degree < 0) degree = 0;
-    if (degree >= BB_GRID_ROWS) degree = BB_GRID_ROWS - 1;
-    int midi = 12 * (4 + octaveOffset) + (rootNote % 12) + SCALE_INTERVALS[scaleId][degree];
+    int semitone = 0;
+    if (scaleId == SCALE_CHROMATIC) {
+        semitone = degree;
+    } else {
+        int period = SCALE_PERIOD[scaleId];
+        int octShift = degree / period;
+        int degInOct = degree % period;
+        if (degInOct < 0) {
+            degInOct += period;
+            octShift--;
+        }
+        semitone = octShift * 12 + SCALE_INTERVALS[scaleId][degInOct];
+    }
+    int midi = 12 * (4 + octaveOffset) + (rootNote % 12) + semitone;
     if (midi < 24) midi = 24;
     if (midi > 108) midi = 108;
     return static_cast<uint8_t>(midi);
@@ -111,6 +130,44 @@ const char* getTrackRoleName(int trackIdx) {
         case TRACK_HARMONY: return "Harmony";
         default:            return "Track";
     }
+}
+
+const char* getDegreeButtonBadge(int degree) {
+    static const char* kBadges[8] = {
+        "<L", "^U", ">R", "vD", "Y", "X", "A", "B"
+    };
+    if (degree < 0 || degree >= 8) return "";
+    return kBadges[degree];
+}
+
+const char* getShoulderModeName(uint8_t mode) {
+    switch (mode) {
+        case SHOULDER_OCTAVE_HOLD: return "OCT";
+        case SHOULDER_SEMITONE:    return "b/#";
+        case SHOULDER_SUS_ROLL:    return "ROLL";
+        default:                   return "OCT";
+    }
+}
+
+const char* getAudioOutModeName(uint8_t mode) {
+    switch (mode) {
+        case AUDIO_OUT_AUTO:      return "AUTO";
+        case AUDIO_OUT_SPEAKER:   return "SPKR";
+        case AUDIO_OUT_HEADPHONE: return "HDPH";
+        default:                  return "AUTO";
+    }
+}
+
+void initDefaultConfig(AppConfig& cfg) {
+    std::memset(&cfg, 0, sizeof(AppConfig));
+    std::memcpy(cfg.magic, "BBCF", 4);
+    cfg.version = 1;
+    cfg.masterVolume = 100;
+    cfg.audioOutMode = AUDIO_OUT_AUTO;
+    cfg.shoulderMode = SHOULDER_OCTAVE_HOLD;
+    cfg.spellbookQuantizedCue = 0;
+    cfg.lastLoopId = 1;
+    cfg.lastSongId = 1;
 }
 
 void getNoteName(uint8_t midiNote, char* outBuf, int bufSize) {
@@ -496,6 +553,43 @@ void transposeLoopRoot(LoopFile& loop, int semitoneDelta) {
             }
         }
     }
+}
+
+void remapLoopToScale(LoopFile& loop, uint8_t newScaleId) {
+    if (newScaleId >= SCALE_COUNT) newScaleId = static_cast<uint8_t>(SCALE_DORIAN);
+    uint8_t oldScale = (loop.scaleId < SCALE_COUNT) ? loop.scaleId : static_cast<uint8_t>(SCALE_DORIAN);
+    if (oldScale == newScaleId) return;
+
+    for (int t = 0; t < BB_NUM_TRACKS; ++t) {
+        if (t == TRACK_DRUMS) continue;
+        int baseOct = (t == TRACK_BASS) ? -1 : 0;
+        for (int s = 0; s < BB_MAX_STEPS; ++s) {
+            StepCell& cell = loop.tracks[t].steps[s];
+            for (int n = 0; n < BB_MAX_POLY_PER_STEP; ++n) {
+                uint8_t oldNote = cell.notes[n];
+                if (oldNote == 0) continue;
+
+                // Find closest degree in old scale across octave offsets -1..+1
+                int bestDeg = 0;
+                int bestOct = baseOct;
+                int bestDist = 999;
+                for (int oct = baseOct - 1; oct <= baseOct + 1; ++oct) {
+                    for (int deg = 0; deg < BB_GRID_ROWS; ++deg) {
+                        int cand = static_cast<int>(getScaleNote(oldScale, loop.rootNote, oct, deg));
+                        int dist = cand - static_cast<int>(oldNote);
+                        if (dist < 0) dist = -dist;
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestDeg = deg;
+                            bestOct = oct;
+                        }
+                    }
+                }
+                cell.notes[n] = getScaleNote(newScaleId, loop.rootNote, bestOct, bestDeg);
+            }
+        }
+    }
+    loop.scaleId = newScaleId;
 }
 
 static uint32_t nextDiceRand(uint32_t& seed) {

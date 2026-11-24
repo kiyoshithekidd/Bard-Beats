@@ -10,25 +10,34 @@
 namespace BardBeats {
 
 void AppState::init() {
+    storageLoadConfig(config);
     refreshSavedLoops();
     refreshSavedSongs();
 
-    if (!savedLoops.empty()) {
-        if (!storageLoadLoop(savedLoops[0].loopId, currentLoop)) {
-            initStarterLoop(currentLoop, 0);
-        }
-    } else {
+    bool loopLoaded = false;
+    if (config.lastLoopId > 0) {
+        loopLoaded = storageLoadLoop(config.lastLoopId, currentLoop);
+    }
+    if (!loopLoaded && !savedLoops.empty()) {
+        loopLoaded = storageLoadLoop(savedLoops[0].loopId, currentLoop);
+    }
+    if (!loopLoaded) {
         initStarterLoop(currentLoop, 0);
     }
 
-    if (!savedSongs.empty()) {
-        if (!storageLoadSong(savedSongs[0].songId, currentSong)) {
-            initStarterSong(currentSong, 0);
-        }
-    } else {
+    bool songLoaded = false;
+    if (config.lastSongId > 0) {
+        songLoaded = storageLoadSong(config.lastSongId, currentSong);
+    }
+    if (!songLoaded && !savedSongs.empty()) {
+        songLoaded = storageLoadSong(savedSongs[0].songId, currentSong);
+    }
+    if (!songLoaded) {
         initStarterSong(currentSong, 0);
     }
 
+    undoHead = 0;
+    undoCount = 0;
     hasUndo = false;
     gridBarPage = 0;
     activeView = VIEW_GRID;
@@ -36,14 +45,32 @@ void AppState::init() {
     octaveOffset = 0;
     isPlaying = false;
     isRecording = false;
+    pendingCountInAction = 0;
     editingFromSong = false;
     showSongShelf = false;
     showMixDrawer = false;
+    showInstPicker = false;
+    showHelpOverlay = false;
+    spellbookQuantizedCue = (config.spellbookQuantizedCue != 0);
 
     audioEngineSetSongMode(false);
+    audioEnginePollHeadphones();
+    syncMasterConfig();
     syncAudioLoop();
     syncSongToAudio();
+    refreshSongSlotLoopCache();
     loadActiveVocalForCurrentMode();
+}
+
+void AppState::saveConfig() {
+    config.lastLoopId = currentLoop.loopId;
+    config.lastSongId = currentSong.songId;
+    config.spellbookQuantizedCue = spellbookQuantizedCue ? 1 : 0;
+    storageSaveConfig(config);
+}
+
+void AppState::syncMasterConfig() {
+    audioEngineSetMasterConfig(config.masterVolume, config.audioOutMode, config.instTrimPct);
 }
 
 void AppState::refreshSavedLoops() {
@@ -52,6 +79,15 @@ void AppState::refreshSavedLoops() {
 
 void AppState::refreshSavedSongs() {
     savedSongs = storageListSongs();
+}
+
+void AppState::refreshSongSlotLoopCache() {
+    if (currentSong.numEntries > 0 && selectedSongSlot >= 0 && selectedSongSlot < currentSong.numEntries) {
+        if (storageLoadLoop(currentSong.chain[selectedSongSlot].loopId, songSlotLoopCache)) {
+            return;
+        }
+    }
+    songSlotLoopCache = currentLoop;
 }
 
 void AppState::setToast(const char* msg, int frames) {
@@ -63,7 +99,13 @@ void AppState::switchView(ViewMode newView) {
     if (isRecordingVocal) {
         stopVocalRecording(true);
     }
+    if (pendingCountInAction != 0) {
+        pendingCountInAction = 0;
+        audioEngineCancelCountIn();
+    }
     showMixDrawer = false;
+    showInstPicker = false;
+    showHelpOverlay = false;
     if (activeView == newView) return;
 
     bool enteringSong = (newView == VIEW_SONG);
@@ -75,6 +117,7 @@ void AppState::switchView(ViewMode newView) {
         editingFromSong = false;
         showSongShelf = false;
         syncSongToAudio();
+        refreshSongSlotLoopCache();
         audioEngineSetSongMode(true);
         audioEngineResetPlayhead();
         loadActiveVocalForCurrentMode();
@@ -87,10 +130,11 @@ void AppState::switchView(ViewMode newView) {
 }
 
 void AppState::snapshotForUndo(int trackIdx) {
-    if (trackIdx < 0 || trackIdx >= BB_NUM_TRACKS) return;
-    undoSnapshot = currentLoop.tracks[trackIdx];
-    undoTrackIdx = trackIdx;
-    hasUndo = true;
+    (void)trackIdx;
+    undoRing[undoHead] = currentLoop;
+    undoHead = (undoHead + 1) % BB_UNDO_LEVELS;
+    if (undoCount < BB_UNDO_LEVELS) undoCount++;
+    hasUndo = (undoCount > 0);
 }
 
 void AppState::performUndo() {
@@ -98,7 +142,7 @@ void AppState::performUndo() {
         undoVocalTake();
         return;
     }
-    if (!hasUndo) {
+    if (undoCount <= 0) {
         if (hasVocalUndo && !undoVocalIsSong && undoVocalTargetId == currentLoop.loopId) {
             undoVocalTake();
             return;
@@ -106,13 +150,24 @@ void AppState::performUndo() {
         setToast("Nothing to undo", 75);
         return;
     }
-    currentLoop.tracks[undoTrackIdx] = undoSnapshot;
-    hasUndo = false;
+    undoHead = (undoHead + BB_UNDO_LEVELS - 1) % BB_UNDO_LEVELS;
+    undoCount--;
+    hasUndo = (undoCount > 0);
+    currentLoop = undoRing[undoHead];
     syncAudioLoop();
-    setToast("Undid last change!", 90);
+    char buf[48];
+    std::snprintf(buf, sizeof(buf), "Undid! (%d left)", undoCount);
+    setToast(buf, 85);
 }
 
 void AppState::togglePlay() {
+    if (pendingCountInAction != 0 || audioEngineIsCountingIn()) {
+        pendingCountInAction = 0;
+        audioEngineCancelCountIn();
+        isRecording = false;
+        setToast("Count-in cancelled", 70);
+        return;
+    }
     if (isRecordingVocal) {
         stopVocalRecording(true);
     }
@@ -126,6 +181,12 @@ void AppState::togglePlay() {
 }
 
 void AppState::toggleRecord() {
+    if (pendingCountInAction != 0 || audioEngineIsCountingIn()) {
+        pendingCountInAction = 0;
+        audioEngineCancelCountIn();
+        setToast("Count-in cancelled", 70);
+        return;
+    }
     if (activeView == VIEW_SONG) {
         if (isRecordingVocal) {
             stopVocalRecording(true);
@@ -134,17 +195,20 @@ void AppState::toggleRecord() {
         }
         return;
     }
-    isRecording = !isRecording;
     if (isRecording) {
-        snapshotForUndo(activeTrack);
-        if (!isPlaying) {
-            isPlaying = true;
-            audioEngineResetPlayhead();
-            audioEngineSetPlaying(true);
-        }
-        setToast("REC ON: Play notes onto grid", 90);
-    } else {
+        isRecording = false;
         setToast("JAM Mode: Live play only", 75);
+        return;
+    }
+    snapshotForUndo(activeTrack);
+    if (!isPlaying) {
+        pendingCountInAction = 1;
+        audioEngineResetPlayhead();
+        audioEngineStartCountIn(4);
+        setToast("Count-in: 4-3-2-1...", 120);
+    } else {
+        isRecording = true;
+        setToast("REC ON: Play notes onto grid", 90);
     }
 }
 
@@ -218,6 +282,16 @@ void AppState::cycleRootKey() {
     setToast(buf, 80);
 }
 
+void AppState::cycleScaleSmart() {
+    snapshotForUndo(activeTrack);
+    uint8_t nextScale = (currentLoop.scaleId + 1) % SCALE_COUNT;
+    remapLoopToScale(currentLoop, nextScale);
+    syncAudioLoop();
+    char buf[48];
+    std::snprintf(buf, sizeof(buf), "Scale: %s (remapped)", getScaleName(currentLoop.scaleId));
+    setToast(buf, 85);
+}
+
 void AppState::rollBardicDice() {
     snapshotForUndo(activeTrack);
     diceSeed ^= static_cast<uint32_t>(audioEngineGetCurrentStep() + 1) * 2654435761u;
@@ -244,9 +318,90 @@ void AppState::cyclePerfMode() {
     else setToast("Play Mode: ARP", 70);
 }
 
+void AppState::cycleAudioOutMode() {
+    config.audioOutMode = (config.audioOutMode + 1) % AUDIO_OUT_COUNT;
+    syncMasterConfig();
+    saveConfig();
+    char buf[64];
+    if (config.audioOutMode == AUDIO_OUT_AUTO) {
+        std::snprintf(buf, sizeof(buf), "Audio Out: AUTO (%s)",
+                      audioEngineIsSpeakerVoicingActive() ? "3DS Speaker" : "Headphones");
+    } else if (config.audioOutMode == AUDIO_OUT_SPEAKER) {
+        std::snprintf(buf, sizeof(buf), "Audio Out: 3DS Speaker EQ");
+    } else {
+        std::snprintf(buf, sizeof(buf), "Audio Out: Headphones (Full Bass)");
+    }
+    setToast(buf, 95);
+}
+
+void AppState::cycleShoulderMode() {
+    config.shoulderMode = (config.shoulderMode + 1) % SHOULDER_MODE_COUNT;
+    saveConfig();
+    if (config.shoulderMode == SHOULDER_OCTAVE_HOLD) {
+        setToast("L/R: Momentary Octave Hold", 95);
+    } else if (config.shoulderMode == SHOULDER_SEMITONE) {
+        setToast("L/R: Flat (-1st) / Sharp (+1st)", 95);
+    } else {
+        setToast("L/R: Sustain Latch + 16th Roll", 95);
+    }
+}
+
+void AppState::tapTempo() {
+    uint64_t now = osGetTime();
+    if (tapCount > 0 && (now - tapTimes[tapCount - 1]) > 2200) {
+        tapCount = 0;
+    }
+    if (tapCount < 4) {
+        tapTimes[tapCount++] = now;
+    } else {
+        tapTimes[0] = tapTimes[1];
+        tapTimes[1] = tapTimes[2];
+        tapTimes[2] = tapTimes[3];
+        tapTimes[3] = now;
+    }
+    if (tapCount >= 2) {
+        uint64_t span = tapTimes[tapCount - 1] - tapTimes[0];
+        if (span > 150) {
+            double avgMs = static_cast<double>(span) / static_cast<double>(tapCount - 1);
+            int bpm = static_cast<int>(std::lround(60000.0 / avgMs));
+            if (bpm < 60) bpm = 60;
+            if (bpm > 180) bpm = 180;
+            if (activeView == VIEW_SONG) {
+                currentSong.bpm = static_cast<uint16_t>(bpm);
+                syncSongToAudio();
+            } else {
+                currentLoop.bpm = static_cast<uint16_t>(bpm);
+                syncAudioLoop();
+            }
+            char buf[40];
+            std::snprintf(buf, sizeof(buf), "Tap Tempo: %d BPM", bpm);
+            setToast(buf, 70);
+        }
+    } else {
+        setToast("Tap Tempo: keep tapping...", 60);
+    }
+}
+
+void AppState::adjustBpm(int delta) {
+    if (activeView == VIEW_SONG) {
+        int v = static_cast<int>(currentSong.bpm) + delta;
+        if (v < 60) v = 60;
+        if (v > 180) v = 180;
+        currentSong.bpm = static_cast<uint16_t>(v);
+        syncSongToAudio();
+    } else {
+        int v = static_cast<int>(currentLoop.bpm) + delta;
+        if (v < 60) v = 60;
+        if (v > 180) v = 180;
+        currentLoop.bpm = static_cast<uint16_t>(v);
+        syncAudioLoop();
+    }
+}
+
 void AppState::saveCurrentLoop() {
     if (storageSaveLoop(currentLoop)) {
         refreshSavedLoops();
+        saveConfig();
         char buf[64];
         std::snprintf(buf, sizeof(buf), "Saved: %s", currentLoop.name);
         setToast(buf, 110);
@@ -265,6 +420,7 @@ void AppState::copyCurrentLoop() {
     if (storageSaveLoop(currentLoop)) {
         refreshSavedLoops();
         syncAudioLoop();
+        saveConfig();
         loadActiveVocalForCurrentMode();
         char buf[64];
         std::snprintf(buf, sizeof(buf), "Copied to %s", currentLoop.name);
@@ -290,9 +446,11 @@ void AppState::loadLoopById(uint16_t loopId) {
     LoopFile loaded;
     if (storageLoadLoop(loopId, loaded)) {
         currentLoop = loaded;
+        undoCount = 0;
         hasUndo = false;
         gridBarPage = 0;
         syncAudioLoop();
+        saveConfig();
         if (activeView != VIEW_SONG) {
             loadActiveVocalForCurrentMode();
         }
@@ -316,9 +474,11 @@ void AppState::cueLoopFromSpellbook(uint16_t loopId) {
     } else {
         hasQueuedSpellbookLoop = false;
         currentLoop = loaded;
+        undoCount = 0;
         hasUndo = false;
         gridBarPage = 0;
         syncAudioLoop();
+        saveConfig();
         loadActiveVocalForCurrentMode();
         if (!isPlaying) {
             isPlaying = true;
@@ -334,7 +494,7 @@ void AppState::cueLoopFromSpellbook(uint16_t loopId) {
 void AppState::exportCurrentLoopWav() {
     setToast("Rendering .WAV to SD...", 60);
     char path[256];
-    if (storageExportLoopWav(currentLoop, activeVocalSamples, path, sizeof(path))) {
+    if (storageExportLoopWav(currentLoop, activeVocalSamples, path, sizeof(path), &config)) {
         setToast("Exported .wav to exports/", 120);
     } else {
         setToast("WAV Export Failed!", 120);
@@ -405,6 +565,8 @@ void AppState::loadSongById(uint16_t songId) {
         selectedSongSlot = 0;
         showSongShelf = false;
         syncSongToAudio();
+        refreshSongSlotLoopCache();
+        saveConfig();
         audioEngineResetPlayhead();
         loadActiveVocalForCurrentMode();
         char buf[64];
@@ -442,6 +604,7 @@ void AppState::addCurrentLoopToSong() {
     currentSong.numEntries++;
     selectedSongSlot = idx;
     saveCurrentSong();
+    refreshSongSlotLoopCache();
 }
 
 void AppState::copyAndTweakSongSlot(int slotIdx) {
@@ -492,6 +655,7 @@ void AppState::editSongSlotLoop(int slotIdx) {
     }
     currentLoop = loaded;
     currentLoop.bpm = currentSong.bpm;
+    undoCount = 0;
     hasUndo = false;
     gridBarPage = 0;
     editingFromSong = true;
@@ -518,6 +682,7 @@ void AppState::returnToSongFromEdit() {
     selectedSongSlot = returnSongSlot;
 
     syncSongToAudio();
+    refreshSongSlotLoopCache();
     audioEngineSetSongMode(true);
     audioEngineResetPlayhead();
     activeView = VIEW_SONG;
@@ -539,12 +704,13 @@ void AppState::deleteSongSlot(int slotIdx) {
         selectedSongSlot = currentSong.numEntries - 1;
     }
     saveCurrentSong();
+    refreshSongSlotLoopCache();
 }
 
 void AppState::exportCurrentSongWav() {
     setToast("Rendering Song .WAV to SD...", 60);
     char path[256];
-    if (storageExportSongWav(currentSong, activeVocalSamples, path, sizeof(path))) {
+    if (storageExportSongWav(currentSong, activeVocalSamples, path, sizeof(path), &config)) {
         setToast("Exported Song .wav to exports/", 120);
     } else {
         setToast("Song WAV Export Failed!", 120);
@@ -566,9 +732,21 @@ void AppState::cycleSongSlotLoop(int slotIdx, int dir) {
     if (nextIdx < 0) nextIdx += count;
     currentSong.chain[slotIdx].loopId = savedLoops[nextIdx].loopId;
     saveCurrentSong();
+    refreshSongSlotLoopCache();
     char buf[64];
     std::snprintf(buf, sizeof(buf), "Slot %d -> %s", slotIdx + 1, savedLoops[nextIdx].name);
     setToast(buf, 85);
+}
+
+void AppState::toggleSongSlotTrackMute(int slotIdx, int trackIdx) {
+    if (slotIdx < 0 || slotIdx >= currentSong.numEntries) return;
+    if (trackIdx < 0 || trackIdx >= BB_NUM_TRACKS) return;
+    currentSong.chain[slotIdx].muteMask ^= static_cast<uint8_t>(1u << trackIdx);
+    syncSongToAudio();
+    bool muted = (currentSong.chain[slotIdx].muteMask & (1u << trackIdx)) != 0;
+    char buf[56];
+    std::snprintf(buf, sizeof(buf), "Slot %d %s: %s", slotIdx + 1, getTrackRoleName(trackIdx), muted ? "MUTED" : "ON");
+    setToast(buf, 75);
 }
 
 int AppState::getLoopNumBarsById(uint16_t loopId) const {
@@ -630,6 +808,23 @@ void AppState::loadActiveVocalForCurrentMode() {
 }
 
 void AppState::startVocalRecording(bool songScope) {
+    if (!micRecorderIsAvailable()) {
+        setToast("3DS Mic unavailable!", 110);
+        return;
+    }
+    if (isPlaying) {
+        isPlaying = false;
+        audioEngineSetPlaying(false);
+    }
+    isRecording = false;
+    audioEngineSetSongMode(songScope);
+    audioEngineResetPlayhead();
+    pendingCountInAction = songScope ? 3 : 2;
+    audioEngineStartCountIn(4);
+    setToast("Vocal Count-In: 4-3-2-1...", 120);
+}
+
+void AppState::beginVocalCaptureNow(bool songScope) {
     if (!micRecorderIsAvailable()) {
         setToast("3DS Mic unavailable!", 110);
         return;
@@ -801,10 +996,29 @@ void AppState::toggleWifiMidi() {
     }
 }
 
+int AppState::getEffectiveLiveOctaveOffset() const {
+    int oct = (activeTrack == TRACK_BASS ? octaveOffset - 1 : octaveOffset);
+    if (config.shoulderMode == SHOULDER_OCTAVE_HOLD) {
+        if (lHeld && rHeld) oct += 2;
+        else if (lHeld) oct -= 1;
+        else if (rHeld) oct += 1;
+    }
+    return oct;
+}
+
+float AppState::getEffectiveLiveBendSemis() const {
+    float bend = circleBendSemis;
+    if (config.shoulderMode == SHOULDER_SEMITONE && activeTrack != TRACK_DRUMS) {
+        if (lHeld && !rHeld) bend -= 1.0f;
+        else if (rHeld && !lHeld) bend += 1.0f;
+    }
+    return bend;
+}
+
 void AppState::playLiveDegree(int degree, uint8_t velocity) {
     if (degree < 0 || degree >= BB_GRID_ROWS) return;
 
-    int oct = (activeTrack == TRACK_BASS ? octaveOffset - 1 : octaveOffset);
+    int oct = getEffectiveLiveOctaveOffset();
     uint8_t instId = currentLoop.tracks[activeTrack].instrumentId;
 
     int noteCount = 1;
@@ -812,7 +1026,7 @@ void AppState::playLiveDegree(int degree, uint8_t velocity) {
     if (activeTrack == TRACK_DRUMS) {
         notes[0] = getDrumPieceNote(degree);
     } else if (perfMode == 1) {
-        // Chord Strum: 3-note scale triad
+        // Chord Strum: 3-note scale triad (now properly octave-wrapped!)
         noteCount = 3;
         notes[0] = getScaleNote(currentLoop.scaleId, currentLoop.rootNote, oct, degree);
         notes[1] = getScaleNote(currentLoop.scaleId, currentLoop.rootNote, oct, degree + 2);
@@ -825,6 +1039,9 @@ void AppState::playLiveDegree(int degree, uint8_t velocity) {
             arpCycleIdx = 0;
         }
     }
+
+    rollHeldDegree = degree;
+    lastRollStep = audioEngineGetCurrentStep();
 
     for (int i = 0; i < noteCount; ++i) {
         audioEngineTriggerLiveNote(activeTrack, instId, notes[i], velocity);
@@ -843,7 +1060,8 @@ void AppState::playLiveDegree(int degree, uint8_t velocity) {
         int step = audioEngineGetCurrentStep();
         float frac = audioEngineGetStepFraction();
         int qStep = (frac >= 0.55f) ? ((step + 1) % totalSteps) : step;
-        int8_t bendQ4 = static_cast<int8_t>(std::lround(circleBendSemis * 16.0f));
+        float effBend = getEffectiveLiveBendSemis();
+        int8_t bendQ4 = static_cast<int8_t>(std::lround(effBend * 16.0f));
         if (bendQ4 > 32) bendQ4 = 32;
         if (bendQ4 < -32) bendQ4 = -32;
         for (int i = 0; i < noteCount; ++i) {
@@ -856,6 +1074,11 @@ void AppState::playLiveDegree(int degree, uint8_t velocity) {
 }
 
 void AppState::releaseLiveNotes() {
+    // In Sustain+Roll mode, holding L latches active notes until L is released
+    if (config.shoulderMode == SHOULDER_SUS_ROLL && lHeld) {
+        rollHeldDegree = -1;
+        return;
+    }
     audioEngineReleaseLiveNotes(activeTrack);
     if (wifiMidiEnabled && lastLiveNote > 0) {
         uint8_t ch = (activeTrack == TRACK_DRUMS) ? 9 : static_cast<uint8_t>(activeTrack);
@@ -864,6 +1087,8 @@ void AppState::releaseLiveNotes() {
     arpHeldDegree = -1;
     lastArpStep = -1;
     arpCycleIdx = 0;
+    rollHeldDegree = -1;
+    lastRollStep = -1;
     recHeldStep = -1;
     recHeldNote = 0;
 }
@@ -872,38 +1097,84 @@ void AppState::handleHardwareInput(u32 kDown, u32 kHeld, u32 kUp, const circlePo
     if (toastFrames > 0) toastFrames--;
     if (liveFlashFrames > 0) liveFlashFrames--;
 
+    // Periodic 3DS Headphone Jack Auto-Detection (~every 0.5s)
+    if (++hpPollCounter >= 30) {
+        hpPollCounter = 0;
+        bool prevSpk = audioEngineIsSpeakerVoicingActive();
+        audioEnginePollHeadphones();
+        bool curSpk = audioEngineIsSpeakerVoicingActive();
+        if (config.audioOutMode == AUDIO_OUT_AUTO && prevSpk != curSpk) {
+            setToast(curSpk ? "Speakers detected (EQ ON)" : "Headphones detected (Full Bass)", 90);
+        }
+    }
+
+    // Complete 4-beat Count-In on exact downbeat
+    if (audioEngineConsumeCountInFinished()) {
+        int act = pendingCountInAction;
+        pendingCountInAction = 0;
+        if (act == 1) {
+            isRecording = true;
+            isPlaying = true;
+            audioEngineResetPlayhead();
+            audioEngineSetPlaying(true);
+            setToast("REC ON: Play notes onto grid!", 90);
+        } else if (act == 2) {
+            beginVocalCaptureNow(false);
+        } else if (act == 3) {
+            beginVocalCaptureNow(true);
+        }
+    }
+
     pollVocalRecording();
 
     // Promote quantized Spellbook cue once audio engine swaps at step 0 (#11)
     if (hasQueuedSpellbookLoop && !audioEngineHasQueuedLoop()) {
         currentLoop = queuedSpellbookLoop;
         hasQueuedSpellbookLoop = false;
+        undoCount = 0;
         hasUndo = false;
         gridBarPage = 0;
+        saveConfig();
         loadActiveVocalForCurrentMode();
         char buf[64];
         std::snprintf(buf, sizeof(buf), "Playing: %s", currentLoop.name);
         setToast(buf, 75);
     }
 
-    if (kDown & KEY_START) {
-        togglePlay();
-    }
-    if (kDown & KEY_SELECT) {
-        switchView((activeView == VIEW_SPELLBOOK) ? VIEW_GRID : VIEW_SPELLBOOK);
+    bool prevL = lHeld;
+    lHeld = (kHeld & KEY_L) != 0;
+    rHeld = (kHeld & KEY_R) != 0;
+
+    // Release latched sustain when L is let go in Sustain+Roll mode
+    if (config.shoulderMode == SHOULDER_SUS_ROLL && prevL && !lHeld) {
+        releaseLiveNotes();
     }
 
-    if (kDown & KEY_L) {
-        if (octaveOffset > -1) {
-            octaveOffset--;
-            setToast(octaveOffset == -1 ? "Octave: Low" : "Octave: Mid", 60);
+    // Ignore START when holding L+R exit combo
+    if ((kDown & KEY_START) && !(lHeld && rHeld)) {
+        togglePlay();
+    }
+
+    // SELECT: quick tap toggles Spellbook; hold > 25 frames toggles Controls Cheat-Sheet
+    if (kHeld & KEY_SELECT) {
+        selectHoldFrames++;
+        if (selectHoldFrames == 25 && !selectConsumedByHelp) {
+            selectConsumedByHelp = true;
+            showHelpOverlay = !showHelpOverlay;
+            showMixDrawer = false;
+            showInstPicker = false;
         }
     }
-    if (kDown & KEY_R) {
-        if (octaveOffset < 1) {
-            octaveOffset++;
-            setToast(octaveOffset == 1 ? "Octave: High" : "Octave: Mid", 60);
+    if (kUp & KEY_SELECT) {
+        if (!selectConsumedByHelp) {
+            if (showHelpOverlay) {
+                showHelpOverlay = false;
+            } else {
+                switchView((activeView == VIEW_SPELLBOOK) ? VIEW_GRID : VIEW_SPELLBOOK);
+            }
         }
+        selectHoldFrames = 0;
+        selectConsumedByHelp = false;
     }
 
     constexpr int DEADZONE = 20;
@@ -919,27 +1190,39 @@ void AppState::handleHardwareInput(u32 kDown, u32 kHeld, u32 kUp, const circlePo
     if (ny > 1.0f) ny = 1.0f;
     circleVibrato = ny;
 
-    audioEngineSetCirclePad(circleBendSemis, circleVibrato);
-    if (wifiMidiEnabled && (std::fabs(circleBendSemis) > 0.02f)) {
+    float totalLiveBend = getEffectiveLiveBendSemis();
+    audioEngineSetCirclePad(totalLiveBend, circleVibrato);
+    if (wifiMidiEnabled && (std::fabs(totalLiveBend) > 0.02f)) {
         uint8_t ch = (activeTrack == TRACK_DRUMS) ? 9 : static_cast<uint8_t>(activeTrack);
-        wifiMidiSendPitchBend(ch, circleBendSemis);
+        wifiMidiSendPitchBend(ch, totalLiveBend);
     }
 
+    // Symmetric clockwise from 9 o'clock: D-Pad (Left, Up, Right, Down) + Face (Y, X, A, B) (#24)
     static const u32 NOTE_KEYS[8] = {
-        KEY_DDOWN, KEY_DRIGHT, KEY_DUP, KEY_DLEFT,
-        KEY_B, KEY_A, KEY_Y, KEY_X
+        KEY_DLEFT, KEY_DUP, KEY_DRIGHT, KEY_DDOWN,
+        KEY_Y,     KEY_X,   KEY_A,      KEY_B
     };
     static constexpr u32 ALL_NOTE_MASK =
-        KEY_DDOWN | KEY_DRIGHT | KEY_DUP | KEY_DLEFT | KEY_B | KEY_A | KEY_Y | KEY_X;
+        KEY_DLEFT | KEY_DUP | KEY_DRIGHT | KEY_DDOWN | KEY_Y | KEY_X | KEY_A | KEY_B;
 
-    if (activeView == VIEW_PADS || activeView == VIEW_INSTRUMENT || activeView == VIEW_GRID) {
+    if (!showHelpOverlay && (activeView == VIEW_PADS || activeView == VIEW_INSTRUMENT || activeView == VIEW_GRID)) {
+        uint8_t vel = (config.shoulderMode == SHOULDER_SUS_ROLL && rHeld) ? 124 : 105;
         for (int deg = 0; deg < 8; ++deg) {
             if (kDown & NOTE_KEYS[deg]) {
-                playLiveDegree(deg, 105);
+                playLiveDegree(deg, vel);
             }
         }
         if ((kUp & ALL_NOTE_MASK) && !(kHeld & ALL_NOTE_MASK)) {
             releaseLiveNotes();
+        }
+    }
+
+    // R-Hold 16th-Note Accent Roll in Sustain+Roll mode (great for drum rolls & lute tremolos)
+    if (config.shoulderMode == SHOULDER_SUS_ROLL && rHeld && rollHeldDegree >= 0 && isPlaying) {
+        int curStep = audioEngineGetCurrentStep();
+        if (curStep != lastRollStep) {
+            lastRollStep = curStep;
+            playLiveDegree(rollHeldDegree, 122);
         }
     }
 
@@ -950,7 +1233,7 @@ void AppState::handleHardwareInput(u32 kDown, u32 kHeld, u32 kUp, const circlePo
             lastArpStep = curStep;
             static const int kArpOffsets[4] = { 0, 2, 4, 7 };
             arpCycleIdx = (arpCycleIdx + 1) & 3;
-            int oct = (activeTrack == TRACK_BASS ? octaveOffset - 1 : octaveOffset);
+            int oct = getEffectiveLiveOctaveOffset();
             uint8_t note = getScaleNote(currentLoop.scaleId, currentLoop.rootNote, oct,
                                         arpHeldDegree + kArpOffsets[arpCycleIdx]);
             uint8_t instId = currentLoop.tracks[activeTrack].instrumentId;
