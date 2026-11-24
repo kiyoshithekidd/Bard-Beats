@@ -44,6 +44,7 @@ void uiInit();
 void uiExit();
 void uiBeginFrame();
 C2D_SpriteSheet uiGetSpriteSheet();
+C2D_SpriteSheet uiGetSpriteSheet2();
 void uiSet3DOffset(float offsetPx);
 float uiGet3DOffset();
 

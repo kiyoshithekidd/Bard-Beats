@@ -7,14 +7,20 @@ namespace BardBeats {
 
 static C2D_TextBuf s_textBuf = nullptr;
 static C2D_SpriteSheet s_spriteSheet = nullptr;
+static C2D_SpriteSheet s_spriteSheet2 = nullptr;
 static float s_3dOffset = 0.0f;
 
 void uiInit() {
     s_textBuf = C2D_TextBufNew(4096);
     s_spriteSheet = C2D_SpriteSheetLoad("romfs:/gfx/sprites.t3x");
+    s_spriteSheet2 = C2D_SpriteSheetLoad("romfs:/gfx/sprites2.t3x");
 }
 
 void uiExit() {
+    if (s_spriteSheet2) {
+        C2D_SpriteSheetFree(s_spriteSheet2);
+        s_spriteSheet2 = nullptr;
+    }
     if (s_spriteSheet) {
         C2D_SpriteSheetFree(s_spriteSheet);
         s_spriteSheet = nullptr;
@@ -27,6 +33,10 @@ void uiExit() {
 
 C2D_SpriteSheet uiGetSpriteSheet() {
     return s_spriteSheet;
+}
+
+C2D_SpriteSheet uiGetSpriteSheet2() {
+    return s_spriteSheet2;
 }
 
 void uiSet3DOffset(float offsetPx) {

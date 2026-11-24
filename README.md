@@ -14,7 +14,8 @@ A standalone loop maker for the Nintendo 3DS. A step sequencer and MIDI synth th
 
 ## Status
 
-- **v0.5.0 (Complete & Building on `main`)**: Boosts `MASTER_GAIN` (`2.15f`), normalizes per-instrument synthesis loudness for 3DS speakers, and adds `0-200%` per-track gain boost sliders with a `100%` unity reference tick in the Mix Drawer (`#22`).
+- **v0.6.0 (Complete & Building on `main`)**: Adds dedicated `384x152` illustrated sprite assets and pixel-aligned interactive note overlays for all 16 instruments across `sprites.t3x` and `sprites2.t3x` (`#21`).
+- **v0.5.0**: Boosted `MASTER_GAIN` (`2.15f`), normalized per-instrument synthesis loudness for 3DS speakers, and added `0-200%` per-track gain boost sliders with a `100%` unity reference tick in the Mix Drawer (`#22`).
 - **v0.4.0**: Raised minimum UI text scale to `0.38f` across all views (`#18`), fixed Ocarina live-drag voice pileup and static clipping (`#19`), and expanded the instrument library to 16 fantasy + modern instruments with a visual Instrument Picker and cross-track layering (`#20`).
 - **v0.3.0**: Fixed Track Mute (`#7`), 2-Bar Grid Cycling (`#8`), 2-Bar Song Timeline (`#9`), Song Slot Loop Cycler (`#10`), and Quantized Cue Sync (`#11`), and added Chord/Arp Mode (`#12`), Sustained Note Lengths (`#13`), Woodblock Metronome (`#14`), Bardic Dice (`#15`), Root Key Transpose (`#16`), and Live VU Pulse Meter (`#17`).
 

@@ -1,0 +1,9 @@
+--atlas -f rgb565 -z auto
+instruments/sub_bass.png
+instruments/elec_bass.png
+instruments/wood_flute.png
+instruments/chip_lead.png
+instruments/synth_brass.png
+instruments/elec_guitar.png
+instruments/tavern_piano.png
+instruments/elec_keys.png

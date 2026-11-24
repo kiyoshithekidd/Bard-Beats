@@ -1,6 +1,7 @@
 #include "view_instrument.h"
 #include "audio_engine.h"
 #include "sprites.h"
+#include "sprites2.h"
 #include "ui_common.h"
 #include <cmath>
 #include <cstdio>
@@ -23,6 +24,18 @@ static constexpr float OCARINA_HOLES[8][2] = {
     { 190.0f, 108.0f }, // Deg 5
     { 248.0f,  79.0f }, // Deg 6
     { 279.0f,  77.0f }  // Deg 7
+};
+
+// 8 tone holes on gfx/instruments/wood_flute.png (ordered left-to-right)
+static constexpr float WOOD_FLUTE_HOLES[8][2] = {
+    {  62.0f, 81.0f }, // Deg 0 (embouchure)
+    { 182.0f, 81.0f }, // Deg 1
+    { 204.0f, 81.0f }, // Deg 2
+    { 226.0f, 81.0f }, // Deg 3
+    { 248.0f, 81.0f }, // Deg 4
+    { 270.0f, 81.0f }, // Deg 5
+    { 292.0f, 81.0f }, // Deg 6
+    { 322.0f, 81.0f }  // Deg 7
 };
 
 // 8 vertical harp strings on gfx/instruments/harp.png: { xTop, yTop, xBot, yBot }
@@ -49,22 +62,34 @@ void viewInstrumentDrawTop(const AppState& state) {
     // Stage background frame
     C2D_DrawRectSolid(STAGE_X, STAGE_Y, 0.05f, 384.0f, 152.0f, Colors::BG_PANEL);
 
-    // Draw illustrated instrument sprite from romfs:/gfx/sprites.t3x
-    C2D_SpriteSheet sheet = uiGetSpriteSheet();
-    if (sheet) {
-        size_t spriteIdx = sprites_lute_idx;
-        if (inst == INST_OCARINA || inst == INST_WOOD_FLUTE ||
-            inst == INST_PULSE_LEAD || inst == INST_SYNTH_BRASS) {
-            spriteIdx = sprites_ocarina_idx;
-        } else if (inst == INST_HARP || inst == INST_TAVERN_PIANO || inst == INST_ELEC_KEYS) {
-            spriteIdx = sprites_harp_idx;
-        } else if (inst == INST_TAVERN_KIT || inst == INST_CHIP_KIT ||
-                   inst == INST_WAR_KIT || inst == INST_LOFI_KIT) {
-            spriteIdx = sprites_drums_idx;
-        } else if (inst == INST_UPRIGHT_BASS || inst == INST_SUB_BASS || inst == INST_ELEC_BASS) {
-            spriteIdx = sprites_bass_idx;
-        }
-        C2D_Image img = C2D_SpriteSheetGetImage(sheet, spriteIdx);
+    // Draw dedicated illustrated instrument sprite from sprites.t3x or sprites2.t3x
+    C2D_SpriteSheet sheet1 = uiGetSpriteSheet();
+    C2D_SpriteSheet sheet2 = uiGetSpriteSheet2();
+    C2D_SpriteSheet activeSheet = sheet1;
+    size_t spriteIdx = sprites_lute_idx;
+
+    switch (inst) {
+        case INST_LUTE:         activeSheet = sheet1; spriteIdx = sprites_lute_idx; break;
+        case INST_OCARINA:      activeSheet = sheet1; spriteIdx = sprites_ocarina_idx; break;
+        case INST_HARP:         activeSheet = sheet1; spriteIdx = sprites_harp_idx; break;
+        case INST_TAVERN_KIT:   activeSheet = sheet1; spriteIdx = sprites_drums_idx; break;
+        case INST_UPRIGHT_BASS: activeSheet = sheet1; spriteIdx = sprites_bass_idx; break;
+        case INST_CHIP_KIT:     activeSheet = sheet1; spriteIdx = sprites_chip_kit_idx; break;
+        case INST_WAR_KIT:      activeSheet = sheet1; spriteIdx = sprites_war_kit_idx; break;
+        case INST_LOFI_KIT:     activeSheet = sheet1; spriteIdx = sprites_lofi_kit_idx; break;
+        case INST_SUB_BASS:     activeSheet = sheet2; spriteIdx = sprites2_sub_bass_idx; break;
+        case INST_ELEC_BASS:    activeSheet = sheet2; spriteIdx = sprites2_elec_bass_idx; break;
+        case INST_WOOD_FLUTE:   activeSheet = sheet2; spriteIdx = sprites2_wood_flute_idx; break;
+        case INST_PULSE_LEAD:   activeSheet = sheet2; spriteIdx = sprites2_chip_lead_idx; break;
+        case INST_SYNTH_BRASS:  activeSheet = sheet2; spriteIdx = sprites2_synth_brass_idx; break;
+        case INST_ELEC_GUITAR:  activeSheet = sheet2; spriteIdx = sprites2_elec_guitar_idx; break;
+        case INST_TAVERN_PIANO: activeSheet = sheet2; spriteIdx = sprites2_tavern_piano_idx; break;
+        case INST_ELEC_KEYS:    activeSheet = sheet2; spriteIdx = sprites2_elec_keys_idx; break;
+        default:                activeSheet = sheet1; spriteIdx = sprites_lute_idx; break;
+    }
+
+    if (activeSheet) {
+        C2D_Image img = C2D_SpriteSheetGetImage(activeSheet, spriteIdx);
         C2D_DrawImageAt(img, sx, STAGE_Y, 0.10f, nullptr, 1.0f, 1.0f);
     }
 
@@ -84,34 +109,72 @@ void viewInstrumentDrawTop(const AppState& state) {
             C2D_DrawLine(x0, y0, glowCol, x1, y1, glowCol, 4.5f, 0.24f);
             C2D_DrawLine(x0, y0, coreCol, x1, y1, coreCol, 1.8f, 0.26f);
             C2D_DrawCircleSolid((x0 + x1) * 0.5f, (y0 + y1) * 0.5f, 0.27f, 6.0f + (1.0f - pulse) * 4.0f, glowCol);
-        } else if (inst == INST_OCARINA || inst == INST_PULSE_LEAD) {
+        } else if (inst == INST_OCARINA) {
             float hx = sx + OCARINA_HOLES[deg][0];
             float hy = STAGE_Y + OCARINA_HOLES[deg][1];
             C2D_DrawCircleSolid(hx, hy, 0.25f, 10.0f + (1.0f - pulse) * 5.0f, glowCol);
             C2D_DrawCircleSolid(hx, hy, 0.27f, 5.0f, coreCol);
-        } else if (inst == INST_TAVERN_KIT || inst == INST_CHIP_KIT) {
-            float dx = sx + 82.0f;
-            float dy = STAGE_Y + 66.0f;
-            float rad = 32.0f;
-            if (deg == 2 || deg == 3) {
-                dx = sx + 204.0f;
-                dy = STAGE_Y + 56.0f;
-                rad = 22.0f;
-            } else if (deg >= 4) {
-                dx = sx + 318.0f;
-                dy = STAGE_Y + 76.0f;
-                rad = 26.0f;
+        } else if (inst == INST_WOOD_FLUTE) {
+            float hx = sx + WOOD_FLUTE_HOLES[deg][0];
+            float hy = STAGE_Y + WOOD_FLUTE_HOLES[deg][1];
+            C2D_DrawCircleSolid(hx, hy, 0.25f, 9.0f + (1.0f - pulse) * 4.0f, glowCol);
+            C2D_DrawCircleSolid(hx, hy, 0.27f, 4.5f, coreCol);
+        } else if (inst == INST_CHIP_KIT) {
+            float px = sx + 97.5f + static_cast<float>(deg) * 27.0f;
+            float py = STAGE_Y + 94.0f;
+            C2D_DrawRectSolid(px - 10.0f, py - 10.0f, 0.25f, 20.0f, 20.0f,
+                              C2D_Color32(0xFF, 0xE0, 0x66, static_cast<uint8_t>(pulse * 160.0f)));
+            C2D_DrawCircleSolid(px, py, 0.27f, 5.0f, coreCol);
+        } else if (inst == INST_SUB_BASS) {
+            float px = sx + 120.0f + static_cast<float>(deg) * 25.0f;
+            float py = STAGE_Y + 80.0f;
+            C2D_DrawCircleSolid(px, py, 0.25f, 11.0f + (1.0f - pulse) * 4.0f, glowCol);
+            C2D_DrawCircleSolid(px, py, 0.27f, 5.0f, coreCol);
+        } else if (inst == INST_PULSE_LEAD || inst == INST_SYNTH_BRASS ||
+                   inst == INST_TAVERN_PIANO || inst == INST_ELEC_KEYS) {
+            float xStart = 82.0f, stepX = 31.0f, py = 78.0f, keyH = 28.0f;
+            if (inst == INST_SYNTH_BRASS)       { xStart = 96.0f; stepX = 28.0f; py = 93.0f; keyH = 26.0f; }
+            else if (inst == INST_TAVERN_PIANO) { xStart = 74.0f; stepX = 33.5f; py = 97.0f; keyH = 32.0f; }
+            else if (inst == INST_ELEC_KEYS)    { xStart = 94.0f; stepX = 27.5f; py = 94.0f; keyH = 26.0f; }
+            float kx = sx + xStart + static_cast<float>(deg) * stepX;
+            C2D_DrawRectSolid(kx - 7.0f, STAGE_Y + py - keyH * 0.5f, 0.25f, 14.0f, keyH,
+                              C2D_Color32(0xFF, 0xE0, 0x66, static_cast<uint8_t>(pulse * 170.0f)));
+            C2D_DrawCircleSolid(kx, STAGE_Y + py, 0.27f, 4.5f, coreCol);
+        } else if (inst == INST_TAVERN_KIT || inst == INST_WAR_KIT || inst == INST_LOFI_KIT) {
+            float dx = sx + 82.0f, dy = STAGE_Y + 66.0f, rad = 32.0f;
+            if (inst == INST_WAR_KIT) {
+                dx = sx + 74.0f; dy = STAGE_Y + 74.0f; rad = 34.0f;
+                if (deg == 2 || deg == 3)      { dx = sx + 208.0f; dy = STAGE_Y + 64.0f; rad = 22.0f; }
+                else if (deg >= 4)             { dx = sx + 312.0f; dy = STAGE_Y + 76.0f; rad = 24.0f; }
+            } else if (inst == INST_LOFI_KIT) {
+                dx = sx + 124.0f; dy = STAGE_Y + 96.0f; rad = 28.0f;
+                if (deg == 2 || deg == 3)      { dx = sx + 198.0f; dy = STAGE_Y + 72.0f; rad = 20.0f; }
+                else if (deg >= 4)             { dx = sx + 266.0f; dy = STAGE_Y + 60.0f; rad = 22.0f; }
+            } else {
+                if (deg == 2 || deg == 3)      { dx = sx + 204.0f; dy = STAGE_Y + 56.0f; rad = 22.0f; }
+                else if (deg >= 4)             { dx = sx + 318.0f; dy = STAGE_Y + 76.0f; rad = 26.0f; }
             }
             C2D_DrawCircleSolid(dx, dy, 0.25f, rad + (1.0f - pulse) * 10.0f,
                                 C2D_Color32(0xFF, 0xE0, 0x66, static_cast<uint8_t>(pulse * 140.0f)));
             C2D_DrawCircleSolid(dx, dy, 0.27f, rad * 0.45f, glowCol);
-        } else if (inst == INST_UPRIGHT_BASS || inst == INST_SUB_BASS) {
-            // 4 thick horizontal bass strings aligned across fingerboard -> bridge on bass.png
+        } else if (inst == INST_UPRIGHT_BASS) {
             int strIdx = deg / 2;
             float sy = STAGE_Y + 71.0f + static_cast<float>(strIdx) * 4.3f;
             C2D_DrawRectSolid(sx + 64.0f, sy - 1.5f, 0.24f, 228.0f, 3.8f, glowCol);
             C2D_DrawRectSolid(sx + 64.0f, sy - 0.5f, 0.26f, 228.0f, 1.4f, coreCol);
             C2D_DrawCircleSolid(sx + 245.0f, sy, 0.27f, 7.0f + (1.0f - pulse) * 4.0f, glowCol);
+        } else if (inst == INST_ELEC_BASS) {
+            int strIdx = deg / 2;
+            float sy = STAGE_Y + 73.0f + static_cast<float>(strIdx) * 3.4f;
+            C2D_DrawRectSolid(sx + 48.0f, sy - 1.5f, 0.24f, 264.0f, 3.2f, glowCol);
+            C2D_DrawRectSolid(sx + 48.0f, sy - 0.5f, 0.26f, 264.0f, 1.2f, coreCol);
+            C2D_DrawCircleSolid(sx + 210.0f, sy, 0.27f, 6.5f + (1.0f - pulse) * 4.0f, glowCol);
+        } else if (inst == INST_ELEC_GUITAR) {
+            int strIdx = deg % 6;
+            float sy = STAGE_Y + 61.0f + static_cast<float>(strIdx) * 2.1f;
+            C2D_DrawRectSolid(sx + 54.0f, sy - 1.2f, 0.24f, 280.0f, 2.8f, glowCol);
+            C2D_DrawRectSolid(sx + 54.0f, sy - 0.4f, 0.26f, 280.0f, 1.0f, coreCol);
+            C2D_DrawCircleSolid(sx + 220.0f, sy, 0.27f, 6.0f + (1.0f - pulse) * 4.0f, glowCol);
         } else {
             float sy = STAGE_Y + 64.0f + static_cast<float>(deg) * 3.4f;
             C2D_DrawRectSolid(sx + 80.0f, sy - 1.5f, 0.24f, 240.0f, 3.5f, glowCol);
